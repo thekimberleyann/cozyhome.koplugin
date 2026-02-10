@@ -1,4 +1,4 @@
-# ☕ Cozy Home — KOReader Homepage Plugin
+# ☕ Cozy Home: KOReader Homepage Plugin
 
 A clean, customizable welcome screen that replaces KOReader's default file
 browser. Big tappable tiles, minimal clutter, and quick access to your books,
