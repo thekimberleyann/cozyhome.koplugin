@@ -1,0 +1,6 @@
+data/*.db 
+data/*.db-wal 
+data/*.db-shm 
+*.swp 
+.DS_Store 
+Thumbs.db 
