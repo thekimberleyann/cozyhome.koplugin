@@ -13,6 +13,18 @@ for crisp e-ink rendering.
 
 ---
 
+## Screenshots
+
+| Home | Highlights | Review |
+|:----:|:----------:|:------:|
+| ![Home](screenshots/home.png) | ![Highlights](screenshots/highlights.png) | ![Review](screenshots/review.png) |
+
+| Focus | Learn Space |
+|:-----:|:-----------:|
+| ![Focus](screenshots/focus.png) | ![Learn Space](screenshots/learnspace.png) |
+
+---
+
 ## Features
 
 ### Welcome Dashboard

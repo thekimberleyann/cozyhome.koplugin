@@ -615,6 +615,41 @@ function HighlightActionScreen:buildUI()
         table.insert(items, sp(8))
     end
 
+    -- Edit Note (KOReader highlights only — Kobo DB is read-only)
+    if hl.source ~= SRC_KOBO then
+        local note_label = (hl.note and hl.note ~= "") and "Edit Note" or "Add Note"
+        table.insert(items, CenterContainer:new{
+            dimen = Geom:new{w = sw, h = 48},
+            Button:new{
+                text = _(note_label),
+                callback = function()
+                    screen._navigating_forward = true
+                    UIManager:close(screen)
+                    viewer:editHighlightNote(hl)
+                end,
+                width = btn_w, bordersize = 1, radius = 8, padding_v = 10, show_parent = self,
+            },
+        })
+        table.insert(items, sp(8))
+    end
+
+    -- Delete Highlight (KOReader highlights only)
+    if hl.source ~= SRC_KOBO then
+        table.insert(items, CenterContainer:new{
+            dimen = Geom:new{w = sw, h = 48},
+            Button:new{
+                text = _("Delete Highlight"),
+                callback = function()
+                    screen._navigating_forward = true
+                    UIManager:close(screen)
+                    viewer:confirmDeleteHighlight(hl)
+                end,
+                width = btn_w, bordersize = 1, radius = 8, padding_v = 10, show_parent = self,
+            },
+        })
+        table.insert(items, sp(8))
+    end
+
     table.insert(items, sp(8))
     table.insert(items, CozyUI.buildFooter(sw, "₊ ⊹ ♡ ⋆ ☆ ⋆ ♡ ⋆ ☆ ⋆ ♡ ⊹ ₊"))
 
@@ -1253,6 +1288,121 @@ function HighlightsHub:showNote(hl)
     local text = "Your Note\n" .. string.rep("─", 30) .. "\n\n" .. hl.note
     if hl.pageno then text = text .. "\n\n" .. string.rep("─", 30) .. "\nPage " .. hl.pageno end
     UIManager:show(InfoMessage:new{ text = text, width = Screen:getWidth() * 0.85 })
+end
+
+-- ─── Edit highlight note ───
+
+function HighlightsHub:editHighlightNote(hl)
+    local hub = self
+    local book_path = hl.book_path or self.book_path
+    if not book_path then
+        UIManager:show(InfoMessage:new{ text = _("Cannot determine book path."), timeout = 3 })
+        hub:reopen()
+        return
+    end
+
+    local dlg
+    dlg = InputDialog:new{
+        title = _("✦ Edit Note ✦"),
+        input = hl.note or "",
+        input_hint = _("Enter your note..."),
+        text_height = math.floor(Screen:getHeight() * 0.2),
+        buttons = {{
+            {
+                text = _("Cancel"),
+                callback = function()
+                    UIManager:close(dlg)
+                    hub:reopen()
+                end,
+            },
+            {
+                text = _("Save"),
+                is_enter_default = true,
+                callback = function()
+                    local new_note = dlg:getInputText() or ""
+                    UIManager:close(dlg)
+                    -- Write the note to the sidecar file
+                    local ok, doc_settings = pcall(DocSettings.open, DocSettings, book_path)
+                    if ok and doc_settings and doc_settings.data then
+                        local annotations = doc_settings.data.annotations
+                        if annotations then
+                            -- Find the matching annotation by text + page
+                            for _, ann in ipairs(annotations) do
+                                if ann.text == hl.text and ann.pageno == hl.pageno then
+                                    ann.note = (new_note ~= "") and new_note or nil
+                                    break
+                                end
+                            end
+                            doc_settings:flush()
+                        end
+                    end
+                    -- Update the in-memory highlight too
+                    hl.note = (new_note ~= "") and new_note or nil
+                    UIManager:show(InfoMessage:new{ text = _("Note saved."), timeout = 2 })
+                    -- Reload highlights and refresh
+                    hub:reloadAndRefresh()
+                end,
+            },
+        }},
+    }
+    UIManager:show(dlg)
+    dlg:onShowKeyboard()
+end
+
+-- ─── Delete highlight ───
+
+function HighlightsHub:confirmDeleteHighlight(hl)
+    local hub = self
+    local book_path = hl.book_path or self.book_path
+    if not book_path then
+        UIManager:show(InfoMessage:new{ text = _("Cannot determine book path."), timeout = 3 })
+        hub:reopen()
+        return
+    end
+
+    local preview = truncate(hl.text or "[No text]", 60)
+    UIManager:show(ConfirmBox:new{
+        text = string.format(
+            _("Delete this highlight?\n\n\"%s\"\n\nThis cannot be undone."),
+            preview),
+        ok_text = _("Delete"),
+        cancel_text = _("Cancel"),
+        ok_callback = function()
+            local ok, doc_settings = pcall(DocSettings.open, DocSettings, book_path)
+            if ok and doc_settings and doc_settings.data then
+                local annotations = doc_settings.data.annotations
+                if annotations then
+                    -- Find and remove the matching annotation
+                    for i, ann in ipairs(annotations) do
+                        if ann.text == hl.text and ann.pageno == hl.pageno then
+                            table.remove(annotations, i)
+                            break
+                        end
+                    end
+                    doc_settings:flush()
+                end
+            end
+            UIManager:show(InfoMessage:new{ text = _("Highlight deleted."), timeout = 2 })
+            -- Reload highlights and refresh
+            hub:reloadAndRefresh()
+        end,
+        cancel_callback = function()
+            hub:reopen()
+        end,
+    })
+end
+
+-- ─── Reload highlights from disk and refresh the screen ───
+
+function HighlightsHub:reloadAndRefresh()
+    -- Re-read highlights from the sidecar files
+    if self.all_books then
+        self:loadAll()
+    else
+        self:loadSingle()
+    end
+    self:applyFilters()
+    self:refresh()
 end
 
 -- ─── Filter menu ───

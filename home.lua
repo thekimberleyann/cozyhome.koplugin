@@ -81,10 +81,21 @@ local sp         = CozyUI.sp
 
 local _lazy_cache = {}
 
+-- Module names that may collide with KOReader core modules.
+-- We clear package.loaded before require() to ensure we get our own copy.
+local _ambiguous_names = {
+    history = true, settings = true, highlights = true,
+}
+
 local function lazyRequire(mod_name)
     if _lazy_cache[mod_name] ~= nil then
         if _lazy_cache[mod_name] == false then return nil end
         return _lazy_cache[mod_name]
+    end
+    -- For names that collide with KOReader modules, clear the Lua
+    -- module cache so require() resolves to our plugin's file.
+    if _ambiguous_names[mod_name] then
+        package.loaded[mod_name] = nil
     end
     local ok, mod = pcall(require, mod_name)
     if ok and mod then
@@ -455,7 +466,7 @@ function CozyHomeScreen:buildUI()
         callback = function()
             home_screen:closeAndRun(function()
                 local History = lazyRequire("history")
-                if History then
+                if History and History.show then
                     History.show(home_screen.ui, function()
                         Home.show(home_screen.ui, home_screen.on_close_callback)
                     end)

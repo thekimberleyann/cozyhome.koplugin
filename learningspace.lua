@@ -1422,20 +1422,9 @@ function ClassDetailScreen:buildNotecardsTab(items, screen_w, screen_h, content_
             dimen = Geom:new{ w = screen_w, h = 24 },
             TextWidget:new{
                 face = Font:getFace("cfont", 13),
-                text = _("Add books or link cards from Cozy Flashcards"),
+                text = _("Use + Link Cards above to add cards"),
                 fgcolor = Blitbuffer.COLOR_GRAY,
             },
-        })
-        table.insert(items, VerticalSpan:new{ width = 12 })
-        local link_btn = Button:new{
-            text = _("+ Link Cards"),
-            callback = function() detail_screen:showCardLinker() end,
-            bordersize = 1, radius = 8, text_font_size = 15,
-            padding_v = 8, show_parent = self,
-        }
-        table.insert(items, CenterContainer:new{
-            dimen = Geom:new{ w = screen_w, h = link_btn:getSize().h + 4 },
-            link_btn,
         })
         return
     end

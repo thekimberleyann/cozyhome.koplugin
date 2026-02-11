@@ -426,6 +426,41 @@ function CardDB.getCard(card_id)
     return card
 end
 
+--- Update a card's front and/or back text.
+-- @param card_id number: Card ID
+-- @param front string|nil: New front text (nil = no change)
+-- @param back string|nil: New back text (nil = no change)
+-- @return boolean: true if updated
+function CardDB.updateCardText(card_id, front, back)
+    if not front and not back then return false end
+    local conn = CardDB.openConn()
+    if not conn then return false end
+    local ok = false
+    pcall(function()
+        local parts = {}
+        local vals = {}
+        if front then
+            table.insert(parts, "front = ?")
+            table.insert(vals, front)
+        end
+        if back then
+            table.insert(parts, "back = ?")
+            table.insert(vals, back)
+        end
+        table.insert(vals, card_id)
+        local sql = "UPDATE flashcards SET " .. table.concat(parts, ", ") .. " WHERE id = ?"
+        local stmt = conn:prepare(sql)
+        if stmt then
+            stmt:bind(unpack(vals))
+            stmt:step()
+            stmt:close()
+            ok = true
+        end
+    end)
+    pcall(function() conn:close() end)
+    return ok
+end
+
 --- Delete a card by ID.
 function CardDB.deleteCard(card_id)
     local conn = CardDB.openConn()
@@ -2600,6 +2635,117 @@ function NotecardsHub:showCardDetail(card_id)
     UIManager:show(InfoMessage:new{ text = table.concat(parts, "\n") })
 end
 
+--- Edit a card's front and back text.
+function NotecardsHub:showEditCard(card_id)
+    local hub = self
+    local card = CardDB.getCard(card_id)
+    if not card then
+        UIManager:show(InfoMessage:new{ text = _("Card not found."), timeout = 2 })
+        return
+    end
+
+    -- Build context description from source highlight
+    local desc = nil
+    if card.source_text and card.source_text ~= "" then
+        local st = card.source_text
+        if #st > 150 then st = st:sub(1, 147) .. "..." end
+        desc = _("Highlight: ") .. st
+    end
+
+    -- Step 1: Edit front
+    local front_dialog
+    front_dialog = InputDialog:new{
+        title = _("✦ Edit Front"),
+        description = desc,
+        input = card.front or "",
+        input_hint = _("Question / prompt"),
+        buttons = {
+            {
+                {
+                    text = _("Cancel"),
+                    id = "close",
+                    callback = function() UIManager:close(front_dialog) end,
+                },
+                {
+                    text = _("Next >"),
+                    is_enter_default = true,
+                    callback = function()
+                        local new_front = front_dialog:getInputText()
+                        UIManager:close(front_dialog)
+                        if not new_front or new_front == "" then
+                            UIManager:show(InfoMessage:new{
+                                text = _("Front text cannot be empty."),
+                                timeout = 2,
+                            })
+                            return
+                        end
+                        -- Step 2: Edit back
+                        local back_desc = desc
+                        if back_desc then
+                            back_desc = back_desc .. "\n\n" .. _("Front: ") .. new_front
+                        else
+                            back_desc = _("Front: ") .. new_front
+                        end
+
+                        local back_dialog
+                        back_dialog = InputDialog:new{
+                            title = _("✦ Edit Back"),
+                            description = back_desc,
+                            input = card.back or "",
+                            input_hint = _("Answer"),
+                            buttons = {
+                                {
+                                    {
+                                        text = _("< Back"),
+                                        callback = function()
+                                            UIManager:close(back_dialog)
+                                            -- Re-open front editor with current text
+                                            card.front = new_front
+                                            hub:showEditCard(card_id)
+                                        end,
+                                    },
+                                    {
+                                        text = _("Save"),
+                                        is_enter_default = true,
+                                        callback = function()
+                                            local new_back = back_dialog:getInputText()
+                                            UIManager:close(back_dialog)
+                                            if not new_back or new_back == "" then
+                                                UIManager:show(InfoMessage:new{
+                                                    text = _("Back text cannot be empty."),
+                                                    timeout = 2,
+                                                })
+                                                return
+                                            end
+                                            local ok = CardDB.updateCardText(card_id, new_front, new_back)
+                                            if ok then
+                                                UIManager:show(InfoMessage:new{
+                                                    text = _("Card updated."),
+                                                    timeout = 2,
+                                                })
+                                                hub:refresh()
+                                            else
+                                                UIManager:show(InfoMessage:new{
+                                                    text = _("Failed to update card."),
+                                                    timeout = 2,
+                                                })
+                                            end
+                                        end,
+                                    },
+                                },
+                            },
+                        }
+                        UIManager:show(back_dialog)
+                        back_dialog:onShowKeyboard()
+                    end,
+                },
+            },
+        },
+    }
+    UIManager:show(front_dialog)
+    front_dialog:onShowKeyboard()
+end
+
 function NotecardsHub:showCardActions(card_id)
     local hub = self
     local card = CardDB.getCard(card_id)
@@ -2615,6 +2761,13 @@ function NotecardsHub:showCardActions(card_id)
         title = front_preview,
         buttons = {
             {
+                {
+                    text = _("Edit"),
+                    callback = function()
+                        UIManager:close(dialog)
+                        hub:showEditCard(card_id)
+                    end,
+                },
                 {
                     text = _("View Details"),
                     callback = function()
