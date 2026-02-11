@@ -3,7 +3,7 @@
 --   ⊹  File:         settings.lua
 --   ⊹  Author:       Kimberley Gonzalez (thekimberleyann)
 --   ⊹  Date:         2026-02-06
---   ⊹  Modified:     2026-02-09
+--   ⊹  Modified:     2026-02-10
 --   ⊹  Project:      Cozy Home for KOReader
 --
 --   🎀 Description:
@@ -61,21 +61,23 @@ local sp         = CozyUI.sp
 -- ─── Categories ───
 
 local CATEGORIES = {
-    { key = "homepage",   label = "Homepage",       icon_text = "H", description = "Tiles, layout, stats bar" },
-    { key = "library",    label = "Library",         icon_text = "B", description = "View mode, sorting, hidden folders" },
-    { key = "notebooks",  label = "Notebooks",       icon_text = "N", description = "Default template, auto-save" },
-    { key = "learnspace", label = "Learning Space",  icon_text = "L", description = "Class defaults" },
-    { key = "notecards",  label = "Notecards",       icon_text = "C", description = "Review limits, intervals" },
-    { key = "statusbar",  label = "Status Bar",      icon_text = "=", description = "WiFi, Bluetooth visibility" },
-    { key = "advanced",   label = "Advanced",        icon_text = "✦", description = "Debug, about, reset" },
+    { key = "homepage",    label = "Homepage",       icon_text = "H", description = "Tiles, layout, stats bar" },
+    { key = "library",     label = "Library",        icon_text = "B", description = "View mode, sorting, hidden folders" },
+    { key = "highlights",  label = "Highlights",     icon_text = "≡", description = "Flashcard creation, display" },
+    { key = "notecards",   label = "Notecards",      icon_text = "C", description = "Review limits, intervals" },
+    { key = "focus",       label = "Focus",          icon_text = "◉", description = "Timer durations, sessions" },
+    { key = "learnspace",  label = "Learning Space", icon_text = "L", description = "Class defaults" },
+    { key = "statusbar",   label = "Status Bar",     icon_text = "=", description = "WiFi, Bluetooth visibility" },
+    { key = "advanced",    label = "Advanced",       icon_text = "✦", description = "Debug, about, reset" },
 }
+
+-- TODO: Re-add Notebooks settings when pen/stylus input is fixed
+-- { key = "notebooks",  label = "Notebooks",  icon_text = "N", description = "Default template, auto-save" },
 
 local PREF = {
     show_stats_bar       = "home_show_stats_bar",
     library_view_mode    = "library_view_mode",
     library_sort_mode    = "library_sort_mode",
-    notebook_template    = "notebook_default_template",
-    notebook_autosave    = "notebook_autosave_seconds",
     cards_per_session    = "cards_per_session",
     new_cards_per_day    = "new_cards_per_day",
     show_wifi            = "statusbar_show_wifi",
@@ -87,7 +89,20 @@ local PREF = {
     sr_interval_modifier   = "sr_interval_modifier",
     sr_max_interval        = "sr_max_interval",
     debug_verbose        = "debug_verbose_logging",
+    -- Highlights
+    hl_batch_flashcards  = "highlights_batch_flashcards",
+    hl_show_chapter      = "highlights_show_chapter",
+    -- Focus
+    focus_work_duration  = "focus_work_duration",
+    focus_short_break    = "focus_short_break",
+    focus_long_break     = "focus_long_break",
+    focus_sessions_before_long = "focus_sessions_before_long",
+    focus_sound_enabled  = "focus_sound_enabled",
 }
+
+-- TODO: Notebook pref keys preserved for when pen is fixed
+-- notebook_template    = "notebook_default_template",
+-- notebook_autosave    = "notebook_autosave_seconds",
 
 -- ─── Settings Hub Screen ───
 
@@ -244,9 +259,10 @@ end
 function SettingsScreen:openCategory(key)
     if key == "homepage" then self:openHomepageSettings()
     elseif key == "library" then self:openLibrarySettings()
-    elseif key == "notebooks" then self:openNotebookSettings()
-    elseif key == "learnspace" then self:openLearnSpaceSettings()
+    elseif key == "highlights" then self:openHighlightsSettings()
     elseif key == "notecards" then self:openNotecardSettings()
+    elseif key == "focus" then self:openFocusSettings()
+    elseif key == "learnspace" then self:openLearnSpaceSettings()
     elseif key == "statusbar" then self:openStatusBarSettings()
     elseif key == "advanced" then self:openAdvancedSettings()
     end
@@ -616,68 +632,150 @@ function SettingsScreen:showHiddenFolderManager()
     UIManager:show(folder_dialog)
 end
 
--- ─── Notebook Settings ───
+-- ─── Highlights Settings ───
 
-function SettingsScreen:openNotebookSettings()
+function SettingsScreen:openHighlightsSettings()
     local settings_screen = self
-    local templates = {
-        { value = "blank", label = "Blank" }, { value = "grid", label = "Grid" },
-        { value = "lined", label = "Lined" }, { value = "dotgrid", label = "Dot Grid" },
-        { value = "cornell", label = "Cornell" }, { value = "planner", label = "Planner" },
-    }
-    local function templateLabel(val)
-        for _, t in ipairs(templates) do if t.value == val then return t.label end end
-        return val
-    end
-
     local rows = {
         {
-            label = _("Default page template"),
-            description = _("Template used when creating new notebooks"),
-            value_func = function() return templateLabel(Database:getPref(PREF.notebook_template, "grid")) end,
+            label = _("Show chapter names"),
+            description = _("Display chapter info with each highlight"),
+            value_func = function()
+                return Database:getPref(PREF.hl_show_chapter, "true") == "true" and "On" or "Off"
+            end,
             callback = function()
-                self:showCyclePicker(_("Default Template"), templates, Database:getPref(PREF.notebook_template, "grid"), function(val)
-                    Database:setPref(PREF.notebook_template, val)
-                    settings_screen:openNotebookSettings()
+                local current = Database:getPref(PREF.hl_show_chapter, "true")
+                local new_val = current == "true" and "false" or "true"
+                Database:setPref(PREF.hl_show_chapter, new_val)
+                settings_screen:openHighlightsSettings()
+            end,
+        },
+        {
+            label = _("Batch flashcard creation"),
+            description = _("Show button to create cards from highlights"),
+            value_func = function()
+                return Database:getPref(PREF.hl_batch_flashcards, "true") == "true" and "On" or "Off"
+            end,
+            callback = function()
+                local current = Database:getPref(PREF.hl_batch_flashcards, "true")
+                local new_val = current == "true" and "false" or "true"
+                Database:setPref(PREF.hl_batch_flashcards, new_val)
+                settings_screen:openHighlightsSettings()
+            end,
+        },
+        { separator = true, label = "Diagnostics" },
+        {
+            label = _("Debug highlights"),
+            description = _("Show diagnostic info about highlight loading"),
+            value_func = function() return "" end,
+            callback = function()
+                local HighlightsModule = package.loaded["highlights"]
+                if not HighlightsModule then
+                    pcall(function() HighlightsModule = require("highlights") end)
+                end
+                if HighlightsModule and HighlightsModule.showDiagnostic then
+                    HighlightsModule.showDiagnostic(settings_screen.ui)
+                else
+                    UIManager:show(InfoMessage:new{
+                        text = _("Highlights module not available."), timeout = 3,
+                    })
+                end
+            end,
+        },
+    }
+    self:showSubScreen(_("Highlights"), rows)
+end
+
+-- ─── Focus Settings ───
+
+function SettingsScreen:openFocusSettings()
+    local settings_screen = self
+    local rows = {
+        {
+            label = _("Work duration"),
+            description = _("Minutes per focus session (5-60)"),
+            value_func = function()
+                return (Database:getPref(PREF.focus_work_duration, tostring(Config.FOCUS.work_duration)) or "25") .. " min"
+            end,
+            callback = function()
+                local current = tonumber(Database:getPref(PREF.focus_work_duration, tostring(Config.FOCUS.work_duration))) or 25
+                self:showNumberInput(_("Work duration (minutes)"), current, 5, 60, function(val)
+                    Database:setPref(PREF.focus_work_duration, tostring(val))
+                    Config.FOCUS.work_duration = val
+                    settings_screen:openFocusSettings()
                 end)
             end,
         },
         {
-            label = _("Auto-save interval"),
-            description = _("Seconds between automatic saves (10-300)"),
-            value_func = function() return Database:getPref(PREF.notebook_autosave, "30") .. "s" end,
+            label = _("Short break"),
+            description = _("Minutes for short break (1-15)"),
+            value_func = function()
+                return (Database:getPref(PREF.focus_short_break, tostring(Config.FOCUS.short_break)) or "5") .. " min"
+            end,
             callback = function()
-                self:showNumberInput(_("Auto-save interval (seconds)"), tonumber(Database:getPref(PREF.notebook_autosave, "30")) or 30, 10, 300, function(val)
-                    Database:setPref(PREF.notebook_autosave, tostring(val))
-                    settings_screen:openNotebookSettings()
+                local current = tonumber(Database:getPref(PREF.focus_short_break, tostring(Config.FOCUS.short_break))) or 5
+                self:showNumberInput(_("Short break (minutes)"), current, 1, 15, function(val)
+                    Database:setPref(PREF.focus_short_break, tostring(val))
+                    Config.FOCUS.short_break = val
+                    settings_screen:openFocusSettings()
                 end)
             end,
         },
-    }
-
-    local has_stylus = Device.hasStylus and Device:hasStylus()
-    if not has_stylus then
-        table.insert(rows, { separator = true, label = "Device" })
-        table.insert(rows, {
-            label = _("Note: No stylus detected"),
-            description = _("Notebooks work best with a stylus-capable device"),
-            value_func = function() return "" end, callback = function() end,
-        })
-        table.insert(rows, {
-            label = _("Show Notebooks tile anyway"),
-            description = _("Force the Notebooks tile to appear on Home"),
+        {
+            label = _("Long break"),
+            description = _("Minutes for long break (5-30)"),
             value_func = function()
-                return Database:getPref("notebooks_force_show", "false") == "true" and "On" or "Off"
+                return (Database:getPref(PREF.focus_long_break, tostring(Config.FOCUS.long_break)) or "15") .. " min"
             end,
             callback = function()
-                local current = Database:getPref("notebooks_force_show", "false")
-                Database:setPref("notebooks_force_show", current == "true" and "false" or "true")
-                settings_screen:openNotebookSettings()
+                local current = tonumber(Database:getPref(PREF.focus_long_break, tostring(Config.FOCUS.long_break))) or 15
+                self:showNumberInput(_("Long break (minutes)"), current, 5, 30, function(val)
+                    Database:setPref(PREF.focus_long_break, tostring(val))
+                    Config.FOCUS.long_break = val
+                    settings_screen:openFocusSettings()
+                end)
             end,
-        })
-    end
-
-    self:showSubScreen(_("Notebooks"), rows)
+        },
+        {
+            label = _("Sessions before long break"),
+            description = _("Work sessions before a long break (2-8)"),
+            value_func = function()
+                return Database:getPref(PREF.focus_sessions_before_long, tostring(Config.FOCUS.sessions_before_long_break)) or "4"
+            end,
+            callback = function()
+                local current = tonumber(Database:getPref(PREF.focus_sessions_before_long, tostring(Config.FOCUS.sessions_before_long_break))) or 4
+                self:showNumberInput(_("Sessions before long break"), current, 2, 8, function(val)
+                    Database:setPref(PREF.focus_sessions_before_long, tostring(val))
+                    Config.FOCUS.sessions_before_long_break = val
+                    settings_screen:openFocusSettings()
+                end)
+            end,
+        },
+        { separator = true, label = "" },
+        {
+            label = _("Reset focus settings to defaults"),
+            value_func = function() return "" end,
+            callback = function()
+                UIManager:show(ConfirmBox:new{
+                    text = _("Reset focus timer settings to defaults?\n\n25 min work, 5 min short break,\n15 min long break, every 4 sessions."),
+                    ok_text = _("Reset"),
+                    ok_callback = function()
+                        Database:setPref(PREF.focus_work_duration, "25")
+                        Database:setPref(PREF.focus_short_break, "5")
+                        Database:setPref(PREF.focus_long_break, "15")
+                        Database:setPref(PREF.focus_sessions_before_long, "4")
+                        Config.FOCUS.work_duration = 25
+                        Config.FOCUS.short_break = 5
+                        Config.FOCUS.long_break = 15
+                        Config.FOCUS.sessions_before_long_break = 4
+                        UIManager:show(InfoMessage:new{ text = _("Focus settings reset."), timeout = 2 })
+                        settings_screen:openFocusSettings()
+                    end,
+                })
+            end,
+        },
+    }
+    self:showSubScreen(_("Focus"), rows)
 end
 
 -- ─── Learning Space Settings ───
@@ -698,7 +796,7 @@ function SettingsScreen:openLearnSpaceSettings()
             value_func = function() return "" end,
             callback = function()
                 UIManager:show(ConfirmBox:new{
-                    text = _("Delete ALL learning space classes?\n\nBooks and notebooks are not affected."),
+                    text = _("Delete ALL learning space classes?\n\nBooks are not affected."),
                     ok_text = _("Delete All"),
                     ok_callback = function()
                         for _, cls in ipairs(Database:getClasses()) do Database:deleteClass(cls.id) end
@@ -855,24 +953,6 @@ function SettingsScreen:openAdvancedSettings()
     local rows = {
         { separator = true, label = "Debug" },
         {
-            label = _("Debug Highlights"),
-            description = _("Show diagnostic info about highlight loading"),
-            value_func = function() return "" end,
-            callback = function()
-                local HighlightsScreen = package.loaded["highlights"]
-                if not HighlightsScreen then
-                    pcall(function() HighlightsScreen = require("highlights") end)
-                end
-                if HighlightsScreen and HighlightsScreen.showDiagnostic then
-                    HighlightsScreen.showDiagnostic(settings_screen.ui)
-                else
-                    UIManager:show(InfoMessage:new{
-                        text = _("Highlights module not available."), timeout = 3,
-                    })
-                end
-            end,
-        },
-        {
             label = _("Verbose logging"),
             description = _("Enable detailed debug output"),
             value_func = function()
@@ -893,13 +973,17 @@ function SettingsScreen:openAdvancedSettings()
             value_func = function() return "" end,
             callback = function()
                 UIManager:show(ConfirmBox:new{
-                    text = _("Reset ALL settings to defaults?\n\nNotebooks, classes, and saves are not affected."),
+                    text = _("Reset ALL settings to defaults?\n\nClasses, cards, and saves are not affected."),
                     ok_text = _("Reset"),
                     ok_callback = function()
                         local conn = Database:getConn()
                         if conn then pcall(function() conn:exec("DELETE FROM preferences") end) end
                         Config.UI.show_stats_bar = true
                         Config.DEBUG.verbose_logging = false
+                        Config.FOCUS.work_duration = 25
+                        Config.FOCUS.short_break = 5
+                        Config.FOCUS.long_break = 15
+                        Config.FOCUS.sessions_before_long_break = 4
                         UIManager:show(InfoMessage:new{ text = _("All settings reset."), timeout = 2 })
                         settings_screen:openAdvancedSettings()
                     end,
@@ -916,14 +1000,17 @@ function SettingsScreen:openAdvancedSettings()
                         .. " v" .. Config.PLUGIN.version
                         .. "\n\n" .. Config.PLUGIN.description
                         .. "\n\nDesigned for Kobo e-ink devices."
-                        .. "\n\nModules: Home, Library, Notebooks,"
-                        .. "\nLearning Spaces, Notecards, Settings",
+                        .. "\n\nModules: Home, Library, Highlights,"
+                        .. "\nLearning Spaces, Notecards, Focus, Settings",
                 })
             end,
         },
     }
     self:showSubScreen(_("Advanced"), rows)
 end
+
+-- TODO: Re-add Notebook settings when pen/stylus input is fixed
+-- function SettingsScreen:openNotebookSettings() ... end
 
 -- ─── Public API ───
 

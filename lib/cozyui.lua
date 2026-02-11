@@ -103,14 +103,15 @@ function CozyUI.buildScreenHeader(opts)
     local sw = opts.sw or Screen:getWidth()
     local pad = opts.pad or 15
     local content_w = sw - pad * 2
-    local bar_h = Screen:scaleBySize(opts.bar_h or 44)
+    local bar_h = Screen:scaleBySize(opts.bar_h or 52)
 
     local back_btn = Button:new{
         text = _("< Back"),
         callback = opts.back_callback,
         bordersize = 0,
-        text_font_size = 14,
-        padding = 4,
+        text_font_size = 16,
+        padding = 8,
+        padding_h = 12,
         show_parent = opts.show_parent,
     }
 
@@ -129,8 +130,10 @@ function CozyUI.buildScreenHeader(opts)
         text = right_text,
         callback = right_cb,
         bordersize = 0,
-        text_font_size = 14,
-        padding = 4,
+        text_font_size = 22,
+        padding = 10,
+        padding_h = 16,
+        margin = 0,
         show_parent = opts.show_parent,
     }
 
@@ -235,18 +238,27 @@ function CozyUI.buildSectionDivider(sw, content_w, label)
 end
 
 -- Label ····· Value  stat row
+-- Clamps label+value so they always fit within content_w.
 function CozyUI.buildStatRow(sw, content_w, label, value)
+    local face = Font:getFace("cfont", 18)
+    local gap = 20  -- minimum space for dots + two 8px spans
+    -- Reserve at most 40% for label, 55% for value (5% for dots minimum)
+    local max_label_w = math.floor(content_w * 0.40)
+    local max_value_w = math.floor(content_w * 0.55)
+
     local label_widget = TextWidget:new{
-        face = Font:getFace("cfont", 18),
+        face = face,
         text = label,
         fgcolor = CozyUI.BLACK,
+        max_width = max_label_w,
     }
     local value_widget = TextWidget:new{
-        face = Font:getFace("cfont", 18),
+        face = face,
         text = tostring(value),
         fgcolor = CozyUI.BLACK,
+        max_width = max_value_w,
     }
-    local used_w = label_widget:getSize().w + value_widget:getSize().w + 20
+    local used_w = label_widget:getSize().w + value_widget:getSize().w + gap
     local dot_w = content_w - used_w
     local dot_count = math.max(3, math.floor(dot_w / 6))
     local dots_widget = TextWidget:new{

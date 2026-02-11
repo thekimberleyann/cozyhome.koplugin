@@ -404,7 +404,32 @@ function ClassListScreen:buildUI()
             background = Blitbuffer.COLOR_LIGHT_GRAY,
         },
     })
-    table.insert(items, VerticalSpan:new{ width = 8 })
+    table.insert(items, VerticalSpan:new{ width = 4 })
+
+    -- "+ New" button row (always visible)
+    local new_btn = Button:new{
+        text = _("+ New"),
+        callback = function()
+            list_screen:showCreateClassDialog()
+        end,
+        bordersize = 1,
+        radius = 8,
+        text_font_size = 15,
+        padding_v = 6,
+        show_parent = self,
+    }
+    table.insert(items, CenterContainer:new{
+        dimen = Geom:new{ w = screen_w, h = new_btn:getSize().h + 4 },
+        FrameContainer:new{
+            dimen = Geom:new{ w = content_w, h = new_btn:getSize().h + 4 },
+            bordersize = 0, padding = 0,
+            RightContainer:new{
+                dimen = Geom:new{ w = content_w, h = new_btn:getSize().h + 4 },
+                new_btn,
+            },
+        },
+    })
+    table.insert(items, VerticalSpan:new{ width = 4 })
 
     -- ------------------------------------------
     -- CLASS LIST
@@ -428,7 +453,7 @@ function ClassListScreen:buildUI()
             dimen = Geom:new{ w = screen_w, h = 24 },
             TextWidget:new{
                 face = Font:getFace("cfont", 14),
-                text = _("Tap '+ New' to create a class or topic"),
+                text = _("Tap '+ New' above to create one"),
                 fgcolor = Blitbuffer.COLOR_GRAY,
             },
         })

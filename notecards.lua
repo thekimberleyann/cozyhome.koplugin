@@ -842,8 +842,9 @@ local function buildReviewHeader(sw, content_w, title_text, close_callback, stat
     local close_btn = Button:new{
         text = _("Close"),
         callback = close_callback,
-        bordersize = 0, margin = 0, padding = 0,
-        text_font_face = "cfont", text_font_size = 16,
+        bordersize = 0, margin = 0,
+        padding = 10, padding_h = 14,
+        text_font_face = "cfont", text_font_size = 18,
     }
     local left_widget = nil
     if stats_callback then
@@ -851,18 +852,20 @@ local function buildReviewHeader(sw, content_w, title_text, close_callback, stat
             Button:new{
                 text = "◌ " .. _("Stats"),
                 callback = stats_callback,
-                bordersize = 0, margin = 0, padding = 0,
-                text_font_face = "cfont", text_font_size = 16,
+                bordersize = 0, margin = 0,
+                padding = 10, padding_h = 14,
+                text_font_face = "cfont", text_font_size = 18,
             },
         }
     else
         left_widget = HorizontalGroup:new{HorizontalSpan:new{width = 1}}
     end
+    local bar_h = math.max(title_widget:getSize().h + 4, close_btn:getSize().h)
     local bar = OverlapGroup:new{
-        dimen = Geom:new{w = content_w, h = title_widget:getSize().h + 4},
+        dimen = Geom:new{w = content_w, h = bar_h},
         left_widget,
         CenterContainer:new{
-            dimen = Geom:new{w = content_w, h = title_widget:getSize().h + 4},
+            dimen = Geom:new{w = content_w, h = bar_h},
             title_widget,
         },
         HorizontalGroup:new{
@@ -871,7 +874,7 @@ local function buildReviewHeader(sw, content_w, title_text, close_callback, stat
         },
     }
     return CenterContainer:new{
-        dimen = Geom:new{w = sw, h = bar:getSize().h},
+        dimen = Geom:new{w = sw, h = bar_h},
         bar,
     }
 end
