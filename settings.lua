@@ -62,7 +62,7 @@ local sp         = CozyUI.sp
 
 local CATEGORIES = {
     { key = "homepage",    label = "Homepage",       icon_text = "H", description = "Tiles, layout, stats bar" },
-    { key = "library",     label = "Library",        icon_text = "B", description = "View mode, sorting, hidden folders" },
+
     { key = "highlights",  label = "Highlights",     icon_text = "≡", description = "Flashcard creation, display" },
     { key = "notecards",   label = "Notecards",      icon_text = "C", description = "Review limits, intervals" },
     { key = "focus",       label = "Focus",          icon_text = "◉", description = "Timer durations, sessions" },
@@ -76,8 +76,6 @@ local CATEGORIES = {
 
 local PREF = {
     show_stats_bar       = "home_show_stats_bar",
-    library_view_mode    = "library_view_mode",
-    library_sort_mode    = "library_sort_mode",
     cards_per_session    = "cards_per_session",
     new_cards_per_day    = "new_cards_per_day",
     show_wifi            = "statusbar_show_wifi",
@@ -263,7 +261,6 @@ end
 
 function SettingsScreen:openCategory(key)
     if key == "homepage" then self:openHomepageSettings()
-    elseif key == "library" then self:openLibrarySettings()
     elseif key == "highlights" then self:openHighlightsSettings()
     elseif key == "notecards" then self:openNotecardSettings()
     elseif key == "focus" then self:openFocusSettings()
@@ -541,108 +538,6 @@ function SettingsScreen:resetTileDefaults()
     end
     Database:setPref(PREF.show_stats_bar, "true")
     Config.UI.show_stats_bar = true
-end
-
--- ─── Library Settings ───
-
-function SettingsScreen:openLibrarySettings()
-    local settings_screen = self
-    local view_modes = {
-        { value = "list", label = "List (text only)" },
-        { value = "list_covers", label = "List with covers" },
-        { value = "gallery", label = "Cover gallery" },
-    }
-    local sort_modes = {
-        { value = "title", label = "By title" },
-        { value = "author", label = "By author" },
-        { value = "recent", label = "By recent" },
-    }
-
-    local function findLabel(options, val)
-        for _, m in ipairs(options) do if m.value == val then return m.label end end
-        return val
-    end
-
-    local rows = {
-        {
-            label = _("Default view mode"),
-            description = _("How books are displayed when opening Library"),
-            value_func = function() return findLabel(view_modes, Database:getPref(PREF.library_view_mode, "list")) end,
-            callback = function()
-                self:showCyclePicker(_("Default View Mode"), view_modes, Database:getPref(PREF.library_view_mode, "list"), function(val)
-                    Database:setPref(PREF.library_view_mode, val)
-                    settings_screen:openLibrarySettings()
-                end)
-            end,
-        },
-        {
-            label = _("Default sort order"),
-            description = _("How books are sorted when opening Library"),
-            value_func = function() return findLabel(sort_modes, Database:getPref(PREF.library_sort_mode, "title")) end,
-            callback = function()
-                self:showCyclePicker(_("Default Sort Order"), sort_modes, Database:getPref(PREF.library_sort_mode, "title"), function(val)
-                    Database:setPref(PREF.library_sort_mode, val)
-                    settings_screen:openLibrarySettings()
-                end)
-            end,
-        },
-        { separator = true, label = "Folders" },
-        {
-            label = _("Manage hidden folders"),
-            description = _("Folders excluded from library scan"),
-            value_func = function()
-                local hidden = Database:getHiddenFolders()
-                local count = 0
-                for _ in pairs(hidden) do count = count + 1 end
-                return count .. " hidden"
-            end,
-            callback = function() settings_screen:showHiddenFolderManager() end,
-        },
-    }
-    self:showSubScreen(_("Library"), rows)
-end
-
-function SettingsScreen:showHiddenFolderManager()
-    local hidden = Database:getHiddenFolders()
-    local paths = {}
-    for path in pairs(hidden) do table.insert(paths, path) end
-    table.sort(paths)
-
-    if #paths == 0 then
-        UIManager:show(InfoMessage:new{
-            text = _("No hidden folders."), timeout = 5,
-        })
-        return
-    end
-
-    local buttons = {}
-    for _, path in ipairs(paths) do
-        local display = path
-        if #display > 40 then display = "..." .. display:sub(-37) end
-        local p = path
-        table.insert(buttons, {{
-            text = "○ " .. display,
-            callback = function()
-                UIManager:show(ConfirmBox:new{
-                    text = _("Unhide this folder?\n\n") .. p,
-                    ok_text = _("Unhide"),
-                    ok_callback = function()
-                        Database:removeHiddenFolder(p)
-                        UIManager:close(folder_dialog)
-                        self:showHiddenFolderManager()
-                    end,
-                })
-            end,
-        }})
-    end
-    table.insert(buttons, {{ text = _("Done"), callback = function() UIManager:close(folder_dialog) end }})
-
-    local ButtonDialog = require("ui/widget/buttondialog")
-    folder_dialog = ButtonDialog:new{
-        title = _("✦ Hidden Folders ✦"),
-        buttons = buttons,
-    }
-    UIManager:show(folder_dialog)
 end
 
 -- ─── Highlights Settings ───
@@ -1013,7 +908,7 @@ function SettingsScreen:openAdvancedSettings()
                         .. " v" .. Config.PLUGIN.version
                         .. "\n\n" .. Config.PLUGIN.description
                         .. "\n\nDesigned for Kobo e-ink devices."
-                        .. "\n\nModules: Home, Library, Highlights,"
+                        .. "\n\nModules: Home, Highlights,"
                         .. "\nLearning Spaces, Notecards, Focus, Settings",
                 })
             end,

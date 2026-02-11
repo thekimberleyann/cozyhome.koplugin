@@ -90,13 +90,7 @@ Config.TILES = {
         enabled = true,
         description = "Configure Cozy Home and plugins",
     },
-    {
-        key = "koreader_settings",
-        label = "KOReader",
-        icon_text = "{⚙}",
-        enabled = true,
-        description = "Open KOReader's built-in settings menu",
-    },
+
 }
 
 -- ============================================

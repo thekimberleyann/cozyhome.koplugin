@@ -151,7 +151,7 @@ function CozyHomeScreen:checkFirstRun()
         UIManager:show(InfoMessage:new{
             text = _("☕ Welcome to Cozy Home!\n\n"
                 .. "Your customizable KOReader dashboard.\n\n"
-                .. "· Books — browse your library\n"
+                .. "· Books — open KOReader file browser\n"
                 .. "· Notebooks — stylus drawing\n"
                 .. "· Learn Space — group by subject\n"
                 .. "· Notecards — flashcard review\n"
@@ -618,20 +618,25 @@ function CozyHomeScreen:getTileCallbacks()
     end
 
     return {
-        books      = nav("library"),
+        books      = function()
+            home_screen:closeAndRun(function()
+                local FileManager = require("apps/filemanager/filemanager")
+                local home_dir = G_reader_settings:readSetting("home_dir")
+                    or Device.home_dir or "/mnt/onboard"
+                if FileManager.instance then
+                    FileManager.instance:reinit(home_dir)
+                else
+                    FileManager:showFiles(home_dir)
+                end
+            end)
+        end,
         highlights = nav("highlights"),
         notebooks  = nav("notebooks"),
         learnspace = nav("learningspace"),
         notecards  = nav("notecards"),
         focus      = nav("focusmode"),
         settings   = nav("settings"),
-        koreader_settings = function()
-            home_screen:closeAndRun(function()
-                if home_screen.ui and home_screen.ui.menu then
-                    home_screen.ui.menu:onTapShowMenu()
-                end
-            end)
-        end,
+
     }
 end
 
