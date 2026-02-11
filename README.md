@@ -6,10 +6,10 @@ highlights, flashcards, and study tools — all styled with the Cozy Design Syst
 for crisp e-ink rendering.
 
 **Author:** Kimberley Gonzalez ([@thekimberleyann](https://github.com/thekimberleyann))  
-**Version:** 0.12.0  
+**Version:** 0.12.1  
 **License:** MIT  
 **Devices:** Kobo Clara 2E (grayscale), Kobo Libra Colour  
-**Updated:** February 10, 2026
+**Updated:** February 11, 2026
 
 ---
 
@@ -20,15 +20,7 @@ for crisp e-ink rendering.
 - Continue Reading card — last book, author, progress, one-tap resume
 - 3×2 grid of navigation tiles (customizable order and visibility)
 - Stats bar with reading activity summary
-- Exit to KOReader file browser
-
-### Library Browser
-- Three view modes: text list, list with covers, cover gallery
-- Sort by title, author, or recent
-- Folder hiding to keep the library clean
-- Author group headers when sorting by author
-- Cover loading via BookInfoManager cache
-- Styled placeholder covers when no image is available
+- Books tile opens KOReader's native file browser
 
 ### Highlights Browser
 - Browse highlights for the current book or all books on device
@@ -64,8 +56,9 @@ for crisp e-ink rendering.
 
 ### Settings Hub
 - Configure tile visibility and order
-- Manage hidden folders for library scanning
 - Display and behavior preferences
+- Spaced repetition tuning
+- Focus timer configuration
 
 ---
 
@@ -89,7 +82,6 @@ cozyhome.koplugin/
 ├── config.lua            Central configuration and constants
 ├── home.lua              Welcome dashboard screen
 ├── history.lua           Recent reads screen
-├── library.lua           Library browser (list/covers/gallery)
 ├── highlights.lua        Highlights browser screen
 ├── highlight_bridge.lua  Flashcard creation from highlights
 ├── learningspace.lua     Learning spaces / topic organization
@@ -103,8 +95,7 @@ cozyhome.koplugin/
 ├── lib/
 │   ├── cozyui.lua        Cozy Design System shared helpers
 │   ├── database.lua      SQLite database wrapper (cozyhome.db)
-│   ├── bookscanner.lua   Device book/library scanner
-│   ├── coverextractor.lua  Book cover image extraction
+│   ├── bookscanner.lua   Device book/library scanner (used by Learning Space)
 │   ├── highlights.lua    KOReader sidecar file reader
 │   ├── kobo.lua          Kobo native SQLite database reader
 │   ├── anki_export.lua   Export flashcards to .apkg format
