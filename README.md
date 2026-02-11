@@ -120,21 +120,6 @@ installed. Cozy Home can create and manage it independently.
 
 ---
 
-## Related Plugins
-
-Cozy Home is part of a family of KOReader plugins that work together:
-
-| Plugin | Description |
-|--------|-------------|
-| **Cozy Home** | Welcome dashboard, navigation hub, and built-in flashcard review (this plugin) |
-| **Cozy Flashcards** | Standalone flashcard plugin with additional settings and font customization |
-| **Cozy Notes** | Highlight aggregation, export, and note management |
-
-Each plugin works standalone. When installed together they share the flashcard
-database, so cards created in one plugin appear in the other.
-
----
-
 ## Requirements
 
 - KOReader (recent version with LuaJIT / Lua 5.1)
