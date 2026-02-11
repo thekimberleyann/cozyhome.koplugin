@@ -846,8 +846,6 @@ function CozyFocusScreen:buildUI()
     table.insert(items, sp(4))
 
     -- ── Stats ──
-    -- When timer is active, show a compact summary (5 rows).
-    -- When idle, show all 10 rows — the idle view has a ScrollableContainer.
     local xp_in, xp_need = getLevelProgress()
     local pct = xp_need > 0 and math.floor((xp_in / xp_need) * 10) or 10
     local bar = string.rep("●", pct) .. string.rep("○", 10 - pct)
@@ -855,8 +853,7 @@ function CozyFocusScreen:buildUI()
     local mins = (game_data.total_minutes or 0) % 60
     local streak_pct = math.floor(getStreakBonus() * 100)
 
-    -- XP progress bar — displayed as a centered line above the stat rows
-    -- so it doesn't have to squeeze into a stat row value
+    -- XP progress bar — always shown as a centered line
     local bar_text = TextWidget:new{
         face = Font:getFace("cfont", 16),
         text = string.format("Lv.%d  [%s]  %d/%s XP",
@@ -869,29 +866,36 @@ function CozyFocusScreen:buildUI()
         dimen = Geom:new{w = sw, h = bar_text:getSize().h + 4},
         bar_text,
     })
-    table.insert(items, sp(4))
+    table.insert(items, sp(6))
 
     if timer_state.active then
-        -- Compact stats: only the essentials
-        table.insert(items, CozyUI.buildStatRow(sw, content_w,
-            _("Streak"),
-            string.format("%d days (+%d%%)", game_data.streak_days or 0, streak_pct)))
-        table.insert(items, CozyUI.buildStatRow(sw, content_w,
-            _("Today"),
-            string.format("%d sessions", game_data.sessions_today or 0)))
-        table.insert(items, CozyUI.buildStatRow(sw, content_w,
-            _("Total"),
-            string.format("%dh %dm", hours, mins)))
+        -- Compact: 2-column pairs for the essentials
+        table.insert(items, CozyUI.buildStatPair(sw, content_w,
+            {_("Streak"), string.format("%d days (+%d%%)", game_data.streak_days or 0, streak_pct)},
+            {_("Today"), string.format("%d sessions", game_data.sessions_today or 0)}
+        ))
+        table.insert(items, CozyUI.buildStatPair(sw, content_w,
+            {_("Total Time"), string.format("%dh %dm", hours, mins)},
+            {_("Total XP"), tostring(game_data.xp or 0)}
+        ))
     else
-        -- Full stats (scrollable in idle view)
-        table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Total XP"), tostring(game_data.xp or 0)))
-        table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Sessions"), tostring(game_data.total_sessions or 0)))
-        table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Pages"), tostring(game_data.total_pages or 0)))
-        table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Time"), string.format("%dh %dm", hours, mins)))
-        table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Cards"), tostring(game_data.total_flashcards or 0)))
-        table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Streak"), string.format("%d days (+%d%%)", game_data.streak_days or 0, streak_pct)))
-        table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Freezes"), tostring(game_data.freeze_tokens or 0)))
-        table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Today"), string.format("%d sessions", game_data.sessions_today or 0)))
+        -- Full stats in 2-column grid (scrollable in idle view)
+        table.insert(items, CozyUI.buildStatPair(sw, content_w,
+            {_("Total XP"), tostring(game_data.xp or 0)},
+            {_("Sessions"), tostring(game_data.total_sessions or 0)}
+        ))
+        table.insert(items, CozyUI.buildStatPair(sw, content_w,
+            {_("Pages Read"), tostring(game_data.total_pages or 0)},
+            {_("Focus Time"), string.format("%dh %dm", hours, mins)}
+        ))
+        table.insert(items, CozyUI.buildStatPair(sw, content_w,
+            {_("Cards Reviewed"), tostring(game_data.total_flashcards or 0)},
+            {_("Streak"), string.format("%d days (+%d%%)", game_data.streak_days or 0, streak_pct)}
+        ))
+        table.insert(items, CozyUI.buildStatPair(sw, content_w,
+            {_("Freeze Tokens"), tostring(game_data.freeze_tokens or 0)},
+            {_("Today"), string.format("%d sessions", game_data.sessions_today or 0)}
+        ))
     end
     table.insert(items, sp(8))
 
@@ -1019,7 +1023,7 @@ function CozyAchievementsScreen:buildUI()
     end
 
     -- Summary stat
-    table.insert(items, CozyUI.buildStatRow(sw, content_w,
+    table.insert(items, CozyUI.buildStatBlock(sw, content_w,
         _("Unlocked"),
         string.format("%d / %d tiers", total_unlocked, total_possible)))
     table.insert(items, sp(8))
@@ -1051,7 +1055,7 @@ function CozyAchievementsScreen:buildUI()
                     name_str = name_str .. " (" .. tier_label .. ")"
                 end
 
-                table.insert(items, CozyUI.buildStatRow(sw, content_w, name_str, progress_str))
+                table.insert(items, CozyUI.buildStatBlock(sw, content_w, name_str, progress_str))
             end
         end
         table.insert(items, sp(8))
@@ -1154,16 +1158,19 @@ function CozyHistoryScreen:buildUI()
     -- Summary stats
     table.insert(items, CozyUI.buildSectionDivider(sw, content_w, "Summary"))
     table.insert(items, sp(6))
-    table.insert(items, CozyUI.buildStatRow(sw, content_w,
-        _("Today"), string.format("%d sessions · %d min", db_stats.today_sessions, db_stats.today_minutes)))
-    table.insert(items, CozyUI.buildStatRow(sw, content_w,
-        _("This Week"), string.format("%d sessions · %d min", db_stats.week_sessions, db_stats.week_minutes)))
 
     local total_hours = math.floor(db_stats.total_minutes / 60)
     local total_mins = db_stats.total_minutes % 60
-    table.insert(items, CozyUI.buildStatRow(sw, content_w,
-        _("All Time"), string.format("%d sessions · %dh %dm", db_stats.total_sessions, total_hours, total_mins)))
-    table.insert(items, sp(12))
+
+    table.insert(items, CozyUI.buildStatPair(sw, content_w,
+        {_("Today"), string.format("%d sessions · %d min", db_stats.today_sessions, db_stats.today_minutes)},
+        {_("This Week"), string.format("%d sessions · %d min", db_stats.week_sessions, db_stats.week_minutes)}
+    ))
+    table.insert(items, CozyUI.buildStatBlock(sw, content_w,
+        _("All Time"),
+        string.format("%d sessions · %dh %dm", db_stats.total_sessions, total_hours, total_mins)
+    ))
+    table.insert(items, sp(8))
 
     -- Recent sessions list
     table.insert(items, CozyUI.buildSectionDivider(sw, content_w, "Recent Sessions"))
@@ -1202,7 +1209,7 @@ function CozyHistoryScreen:buildUI()
                 table.insert(items, sp(2))
             end
 
-            -- Session entry
+            -- Session entry: time as label, details as value
             local time_str = session.started_at and session.started_at:sub(12, 16) or ""
             local dur_str = string.format("%d min", session.duration_minutes or 0)
             local pages_str = (session.pages_read and session.pages_read > 0)
@@ -1211,19 +1218,14 @@ function CozyHistoryScreen:buildUI()
                 and string.format(" · +%d XP", session.xp_earned) or ""
             local book_str = ""
             if session.book_title and session.book_title ~= "" then
-                book_str = CozyUI.truncateText(session.book_title, 30)
+                book_str = CozyUI.truncateText(session.book_title, 40)
             end
 
-            -- Left side: time + book title
-            local left_str = time_str
-            if book_str ~= "" then
-                left_str = left_str .. "  " .. book_str
-            end
+            local label = time_str
+            if book_str ~= "" then label = time_str .. "  " .. book_str end
+            local value = dur_str .. pages_str .. xp_str
 
-            -- Right side: duration + pages + XP
-            local right_str = dur_str .. pages_str .. xp_str
-
-            table.insert(items, CozyUI.buildStatRow(sw, content_w, left_str, right_str))
+            table.insert(items, CozyUI.buildStatBlock(sw, content_w, label, value))
         end
     end
 

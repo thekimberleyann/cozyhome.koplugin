@@ -340,6 +340,94 @@ end
 -- FocusMode sets this on load so all screens can display the countdown.
 CozyUI.getTimerDisplay = nil
 
+--- Compact stat block: label above, value below.
+-- No dots, no horizontal cramming. Fits any screen width.
+-- @param sw number: screen width
+-- @param content_w number: content area width
+-- @param label string: small gray label text
+-- @param value string: larger black value text
+function CozyUI.buildStatBlock(sw, content_w, label, value)
+    local label_widget = TextWidget:new{
+        face = Font:getFace("smallinfofont"),
+        text = label,
+        fgcolor = CozyUI.GRAY,
+        max_width = content_w,
+    }
+    local value_widget = TextWidget:new{
+        face = Font:getFace("cfont", 18),
+        text = tostring(value),
+        fgcolor = CozyUI.BLACK,
+        max_width = content_w,
+    }
+    local group = VerticalGroup:new{
+        align = "left",
+        label_widget,
+        VerticalSpan:new{width = 2},
+        value_widget,
+    }
+    local h = label_widget:getSize().h + 2 + value_widget:getSize().h + 6
+    return CenterContainer:new{
+        dimen = Geom:new{w = sw, h = h},
+        LeftContainer:new{
+            dimen = Geom:new{w = content_w, h = h},
+            FrameContainer:new{
+                bordersize = 0, padding = 0,
+                padding_left = 4, padding_bottom = 6,
+                background = CozyUI.WHITE,
+                group,
+            },
+        },
+    }
+end
+
+--- Grid of stat blocks: 2 columns side by side.
+-- Each item is {label, value}.
+-- @param sw number: screen width
+-- @param content_w number: content area width
+-- @param left table: {label, value}
+-- @param right table: {label, value}
+function CozyUI.buildStatPair(sw, content_w, left, right)
+    local col_w = math.floor(content_w * 0.48)
+
+    local function buildCol(data)
+        local lbl = TextWidget:new{
+            face = Font:getFace("smallinfofont"),
+            text = data[1],
+            fgcolor = CozyUI.GRAY,
+            max_width = col_w,
+        }
+        local val = TextWidget:new{
+            face = Font:getFace("cfont", 18),
+            text = tostring(data[2]),
+            fgcolor = CozyUI.BLACK,
+            max_width = col_w,
+        }
+        return LeftContainer:new{
+            dimen = Geom:new{w = col_w, h = lbl:getSize().h + 2 + val:getSize().h},
+            VerticalGroup:new{
+                align = "left",
+                lbl,
+                VerticalSpan:new{width = 2},
+                val,
+            },
+        }
+    end
+
+    local left_col = buildCol(left)
+    local right_col = buildCol(right)
+    local row_h = math.max(left_col:getSize().h, right_col:getSize().h) + 6
+
+    return CenterContainer:new{
+        dimen = Geom:new{w = sw, h = row_h},
+        HorizontalGroup:new{
+            align = "top",
+            left_col,
+            HorizontalSpan:new{width = math.floor(content_w * 0.04)},
+            right_col,
+        },
+    }
+end
+
 -- Status icons for card/item lists
 CozyUI.STATUS = {
     NEW       = "○",

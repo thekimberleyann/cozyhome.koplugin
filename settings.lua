@@ -168,12 +168,12 @@ function SettingsScreen:buildUI()
     table.insert(items, CozyUI.buildDottedDivider(sw, content_w))
     table.insert(items, sp(10))
 
-    -- Category rows
-    local row_h = 60
+    -- Category rows (dynamic height based on content)
     for _, cat in ipairs(CATEGORIES) do
-        local row = self:buildCategoryRow(cat, content_w, row_h)
+        local row = self:buildCategoryRow(cat, content_w)
+        local actual_h = row:getSize().h
         table.insert(items, CenterContainer:new{
-            dimen = Geom:new{w = sw, h = row_h}, row,
+            dimen = Geom:new{w = sw, h = actual_h}, row,
         })
         table.insert(items, CenterContainer:new{
             dimen = Geom:new{w = sw, h = 1},
@@ -203,10 +203,11 @@ function SettingsScreen:buildUI()
     }
 end
 
-function SettingsScreen:buildCategoryRow(cat, content_w, row_h)
+function SettingsScreen:buildCategoryRow(cat, content_w, row_h_ignored)
     local settings_screen = self
     local icon_w_sz = 36
     local arrow_w = 30
+    local v_pad = 12  -- vertical padding above and below content
 
     local icon = TextWidget:new{
         face = Font:getFace("tfont", 22), text = cat.icon_text, fgcolor = BLACK,
@@ -224,6 +225,10 @@ function SettingsScreen:buildCategoryRow(cat, content_w, row_h)
     local label_group = VerticalGroup:new{
         align = "left", label, sp(2), desc,
     }
+
+    -- Measure actual content height and add padding
+    local text_h = label:getSize().h + 2 + desc:getSize().h
+    local row_h = math.max(48, text_h + v_pad * 2)
 
     local label_w = content_w - icon_w_sz - arrow_w - 36
     local row_content = HorizontalGroup:new{
@@ -292,16 +297,16 @@ function SettingsScreen:showSubScreen(title, rows)
     table.insert(items, CozyUI.buildDottedDivider(sw, content_w))
     table.insert(items, sp(8))
 
-    local row_h = 52
     for _, row_def in ipairs(rows) do
         if row_def.separator then
             table.insert(items, sp(4))
             table.insert(items, CozyUI.buildSectionDivider(sw, content_w, row_def.label or ""))
             table.insert(items, sp(4))
         else
-            local row_widget = self:buildSettingRow(row_def, content_w, row_h)
+            local row_widget = self:buildSettingRow(row_def, content_w)
+            local actual_h = row_widget:getSize().h
             table.insert(items, CenterContainer:new{
-                dimen = Geom:new{w = sw, h = row_h}, row_widget,
+                dimen = Geom:new{w = sw, h = actual_h}, row_widget,
             })
         end
     end
@@ -353,7 +358,9 @@ function SettingsScreen:showSubScreen(title, rows)
     UIManager:show(sub_screen)
 end
 
-function SettingsScreen:buildSettingRow(row_def, content_w, row_h)
+function SettingsScreen:buildSettingRow(row_def, content_w, row_h_ignored)
+    local v_pad = 10  -- vertical padding above and below content
+
     local label_text = TextWidget:new{
         face = Font:getFace("cfont", 16), text = row_def.label, fgcolor = BLACK,
     }
@@ -364,14 +371,20 @@ function SettingsScreen:buildSettingRow(row_def, content_w, row_h)
     }
 
     local label_group
+    local content_h
     if row_def.description then
         local desc_text = TextWidget:new{
             face = Font:getFace("smallinfofont", 12), text = row_def.description, fgcolor = GRAY,
         }
         label_group = VerticalGroup:new{ align = "left", label_text, sp(2), desc_text }
+        content_h = label_text:getSize().h + 2 + desc_text:getSize().h
     else
         label_group = label_text
+        content_h = label_text:getSize().h
     end
+
+    -- Use the taller of the label group or the value text, plus padding
+    local row_h = math.max(40, math.max(content_h, value_text:getSize().h) + v_pad * 2)
 
     local row_content = OverlapGroup:new{
         dimen = Geom:new{w = content_w, h = row_h},
