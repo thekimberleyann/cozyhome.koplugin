@@ -406,8 +406,9 @@ function LibraryScreen:buildTitleBar(screen_w)
             lib_screen:onClose()
         end,
         bordersize = 0,
-        text_font_size = LibConfig.font_btn,
-        padding = 4,
+        text_font_size = 16,
+        padding = 8,
+        padding_h = 12,
         show_parent = self,
     }
 
@@ -447,15 +448,16 @@ function LibraryScreen:buildTitleBar(screen_w)
         show_parent = self,
     }
 
-    -- Exit button
+    -- Exit button (sized for e-ink tap accuracy)
     local exit_btn = Button:new{
         text = _("✕"),
         callback = function()
             lib_screen:onClose()
         end,
         bordersize = 0,
-        text_font_size = LibConfig.font_btn,
-        padding = 4,
+        text_font_size = 22,
+        padding = 10,
+        padding_h = 16,
         show_parent = self,
     }
 

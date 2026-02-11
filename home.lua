@@ -3,7 +3,7 @@
 --   ⊹  File:         home.lua
 --   ⊹  Author:       Kimberley Gonzalez (thekimberleyann)
 --   ⊹  Date:         2026-02-05
---   ⊹  Modified:     2026-02-09
+--   ⊹  Modified:     2026-02-11
 --   ⊹  Project:      Cozy Home for KOReader
 --
 --   🎀 Description:
@@ -11,25 +11,27 @@
 --       card, navigation tiles, stats bar, and greeting.
 --       Styled to Cozy Design System.
 --
---   🎀 License:      MIT
+--   🎀 Optimization note (2026-02-11):
+--       Screen modules (History, Library, Notebooks, etc.)
+--       are now lazy-loaded — they are only require()'d
+--       when the user taps the corresponding tile. This
+--       means opening Cozy Home only loads the dashboard
+--       UI (~30KB), not all 8 screens (~500KB).
 --
---   🎀 Dependencies:
---       - config.lua
---       - lib/cozyui.lua
---       - statusbar.lua
---       - history.lua
---       - library.lua
---       - notebooks.lua
---       - learningspace.lua
---       - notecards.lua
---       - highlights.lua
---       - settings.lua
+--       Stats computation is also deferred to a nextTick
+--       so the home screen appears instantly, then fills
+--       in stats a frame later.
+--
+--   🎀 License:      MIT
 --
 -- + ⊹ 🎀 ⋆ 🌙 ⋆ ☆ ⋆ ☀️ ⋆ 🎀 ⊹ +
 
+-- ============================================
+-- IMPORTS — only what's needed to render the home screen
+-- ============================================
+
 local Blitbuffer = require("ffi/blitbuffer")
 local Device = require("device")
-local Event = require("ui/event")
 local Font = require("ui/font")
 local Geom = require("ui/geometry")
 local UIManager = require("ui/uimanager")
@@ -42,7 +44,6 @@ local HorizontalSpan = require("ui/widget/horizontalspan")
 local ImageWidget = require("ui/widget/imagewidget")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LeftContainer = require("ui/widget/container/leftcontainer")
-local LineWidget = require("ui/widget/linewidget")
 local OverlapGroup = require("ui/widget/overlapgroup")
 local RightContainer = require("ui/widget/container/rightcontainer")
 local TextWidget = require("ui/widget/textwidget")
@@ -50,6 +51,7 @@ local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
 local ScrollableContainer = require("ui/widget/container/scrollablecontainer")
 local InfoMessage = require("ui/widget/infomessage")
+local GestureRange = require("ui/gesturerange")
 
 local DocSettings = require("docsettings")
 local ReadHistory = require("readhistory")
@@ -57,18 +59,14 @@ local Screen = Device.screen
 local _ = require("gettext")
 local logger = require("logger")
 
+-- Our lightweight modules (config, UI helpers, statusbar, database)
 local Config = require("config")
 local CozyUI = require("lib/cozyui")
 local StatusBar = require("statusbar")
 local Database = require("lib/database")
-local History = require("history")
-local Library = require("library")
-local Notebooks = require("notebooks")
-local LearningSpace = require("learningspace")
-local Notecards = require("notecards")
-local Settings = require("settings")
-local HighlightsScreen = require("highlights")
-local FocusMode = require("focusmode")
+
+-- Screen modules are NOT loaded here — they're lazy-loaded in tile callbacks.
+-- This saves ~500KB of Lua parsing at home screen open time.
 
 local BLACK      = CozyUI.BLACK
 local DARK_GRAY  = CozyUI.DARK_GRAY
@@ -76,6 +74,28 @@ local GRAY       = CozyUI.GRAY
 local LIGHT_GRAY = CozyUI.LIGHT_GRAY
 local WHITE      = CozyUI.WHITE
 local sp         = CozyUI.sp
+
+-- ─────────────────────────────────────────
+-- Lazy module loader (caches after first load)
+-- ─────────────────────────────────────────
+
+local _lazy_cache = {}
+
+local function lazyRequire(mod_name)
+    if _lazy_cache[mod_name] ~= nil then
+        if _lazy_cache[mod_name] == false then return nil end
+        return _lazy_cache[mod_name]
+    end
+    local ok, mod = pcall(require, mod_name)
+    if ok and mod then
+        _lazy_cache[mod_name] = mod
+        return mod
+    else
+        logger.warn("CozyHome home.lua: Failed to load", mod_name, ":", mod)
+        _lazy_cache[mod_name] = false
+        return nil
+    end
+end
 
 -- ─────────────────────────────────────────
 -- CozyHomeScreen
@@ -87,7 +107,8 @@ local CozyHomeScreen = InputContainer:extend{
     on_close_callback = nil,
     _cached_book_info = nil,
     _cached_stats_text = nil,
-    _cover_bb = nil,  -- cached cover blitbuffer for continue-reading book
+    _cover_bb = nil,
+    _stats_widget = nil,  -- reference to stats TextWidget for deferred update
 }
 
 local Home = {}
@@ -107,10 +128,19 @@ function CozyHomeScreen:init()
 
     Database:open()
     self._cached_book_info = self:getLastBookInfo()
-    self._cached_stats_text = self:computeStatsText()
+    -- Stats text starts as a placeholder — we compute it after the screen draws
+    self._cached_stats_text = _("Loading…")
     Home._current_instance = self
     self:checkFirstRun()
     self:buildUI()
+
+    -- Defer the expensive stats computation so the home screen appears FAST
+    -- then we update the stats text after it's visible
+    UIManager:nextTick(function()
+        if Home._current_instance == self then
+            self:computeStatsDeferred()
+        end
+    end)
 end
 
 function CozyHomeScreen:checkFirstRun()
@@ -140,7 +170,6 @@ function CozyHomeScreen:onShow()
 end
 
 function CozyHomeScreen:onCloseWidget()
-    -- Free the cached cover blitbuffer to avoid memory leaks
     if self._cover_bb and self._cover_bb.free then
         self._cover_bb:free()
         self._cover_bb = nil
@@ -206,13 +235,7 @@ end
 
 -- ─── Cover Loading ───
 
---- Try to get a cover Blitbuffer for a book path.
--- Strategy:
---   1. Try BookInfoManager (works with CoverBrowser OR ProjectTitle — instant, from SQLite cache)
---   2. Fall back to DocumentRegistry:openDocument → getCoverPageImage (slower, parses the file)
--- Returns a Blitbuffer on success, or nil if no cover found.
 function CozyHomeScreen:getCoverBB(filepath)
-    -- Return cached result if we already looked this up
     if self._cover_bb ~= nil then
         if self._cover_bb == false then return nil end
         return self._cover_bb
@@ -220,21 +243,21 @@ function CozyHomeScreen:getCoverBB(filepath)
 
     local cover_bb = nil
 
-    -- Tier 1: Try BookInfoManager cache (fast — works with ProjectTitle or CoverBrowser)
+    -- Tier 1: Try BookInfoManager cache (fast)
     local bim_ok, BookInfoManager = pcall(require, "bookinfomanager")
     if bim_ok and BookInfoManager then
         if not BookInfoManager.db_created and BookInfoManager.init then
             pcall(BookInfoManager.init, BookInfoManager)
         end
         local info_ok, bookinfo = pcall(
-            BookInfoManager.getBookInfo, BookInfoManager, filepath, true -- true = get_cover
+            BookInfoManager.getBookInfo, BookInfoManager, filepath, true
         )
         if info_ok and bookinfo and bookinfo.cover_bb then
             cover_bb = bookinfo.cover_bb
         end
     end
 
-    -- Tier 2: Open the document directly and extract cover (slower fallback)
+    -- Tier 2: Open document directly (slower fallback)
     if not cover_bb then
         local DocumentRegistry = require("document/documentregistry")
         if DocumentRegistry:hasProvider(filepath) then
@@ -249,7 +272,6 @@ function CozyHomeScreen:getCoverBB(filepath)
         end
     end
 
-    -- Cache: false means "no cover" vs nil meaning "not yet looked up"
     self._cover_bb = cover_bb or false
     return cover_bb
 end
@@ -311,16 +333,14 @@ function CozyHomeScreen:buildUI()
     local book_info = self._cached_book_info or self:getLastBookInfo()
 
     if book_info.has_book then
-        local cover_h = math.floor(sh * 0.16)  -- cover thumbnail height
-        local cover_w = math.floor(cover_h * 0.667)  -- ~2:3 book aspect ratio
-        local text_w = content_w - cover_w - 14 - 28  -- 14 gap + card padding
+        local cover_h = math.floor(sh * 0.16)
+        local cover_w = math.floor(cover_h * 0.667)
+        local text_w = content_w - cover_w - 14 - 28
 
-        -- Try to load the real cover image
         local cover_bb = self:getCoverBB(book_info.path)
         local cover_widget
 
         if cover_bb then
-            -- Real cover image
             local img = ImageWidget:new{
                 image = cover_bb,
                 width = cover_w - 4,
@@ -330,37 +350,30 @@ function CozyHomeScreen:buildUI()
             }
             cover_widget = FrameContainer:new{
                 dimen = Geom:new{w = cover_w, h = cover_h},
-                bordersize = 1,
-                padding = 1,
-                color = GRAY,
-                background = WHITE,
+                bordersize = 1, padding = 1,
+                color = GRAY, background = WHITE,
                 CenterContainer:new{
                     dimen = Geom:new{w = cover_w - 4, h = cover_h - 4},
                     img,
                 },
             }
         else
-            -- Fallback: styled placeholder with first letter
             local first_letter = (book_info.title:sub(1, 1) or "?"):upper()
             local letter_size = math.max(14, math.floor(cover_h * 0.3))
             cover_widget = FrameContainer:new{
                 dimen = Geom:new{w = cover_w, h = cover_h},
-                bordersize = 1,
-                padding = 2,
-                color = GRAY,
-                background = DARK_GRAY,
+                bordersize = 1, padding = 2,
+                color = GRAY, background = DARK_GRAY,
                 CenterContainer:new{
                     dimen = Geom:new{w = cover_w - 6, h = cover_h - 6},
                     TextWidget:new{
                         face = Font:getFace("tfont", letter_size),
-                        text = first_letter,
-                        fgcolor = WHITE,
+                        text = first_letter, fgcolor = WHITE,
                     },
                 },
             }
         end
 
-        -- Text column: label, title, author, progress
         local title_display = CozyUI.truncateText(book_info.title, 36)
         local detail_parts = {}
         if book_info.author ~= "" then
@@ -372,26 +385,21 @@ function CozyHomeScreen:buildUI()
             align = "left",
             TextWidget:new{
                 face = Font:getFace("smallinfofont"),
-                text = _("Continue Reading"),
-                fgcolor = GRAY,
+                text = _("Continue Reading"), fgcolor = GRAY,
             },
             sp(6),
             TextWidget:new{
                 face = Font:getFace("tfont", 18),
-                text = title_display,
-                fgcolor = BLACK,
-                max_width = text_w,
+                text = title_display, fgcolor = BLACK, max_width = text_w,
             },
             sp(4),
             TextWidget:new{
                 face = Font:getFace("cfont", 14),
                 text = table.concat(detail_parts, "  ·  "),
-                fgcolor = DARK_GRAY,
-                max_width = text_w,
+                fgcolor = DARK_GRAY, max_width = text_w,
             },
         }
 
-        -- Horizontal layout: cover | gap | text
         local card_inner = HorizontalGroup:new{
             align = "center",
             cover_widget,
@@ -406,7 +414,6 @@ function CozyHomeScreen:buildUI()
         }
 
         local card = CozyUI.buildRoundedBox(card_inner)
-        local GestureRange = require("ui/gesturerange")
 
         local TappableCard = InputContainer:extend{}
         function TappableCard:init()
@@ -447,9 +454,12 @@ function CozyHomeScreen:buildUI()
         text = _("History ▸"),
         callback = function()
             home_screen:closeAndRun(function()
-                History.show(home_screen.ui, function()
-                    Home.show(home_screen.ui, home_screen.on_close_callback)
-                end)
+                local History = lazyRequire("history")
+                if History then
+                    History.show(home_screen.ui, function()
+                        Home.show(home_screen.ui, home_screen.on_close_callback)
+                    end)
+                end
             end)
         end,
         bordersize = 0, text_font_size = 14, padding = 4,
@@ -473,7 +483,6 @@ function CozyHomeScreen:buildUI()
     local tile_h = math.floor(sh * Config.UI.tile_height_fraction)
 
     local tile_callbacks = self:getTileCallbacks()
-    local GestureRange = require("ui/gesturerange")
     local tile_idx = 1
 
     for row = 1, grid_rows do
@@ -502,11 +511,8 @@ function CozyHomeScreen:buildUI()
 
             local tile_frame = FrameContainer:new{
                 dimen = Geom:new{w = tile_w, h = tile_h},
-                bordersize = 1,
-                radius = 10,
-                padding = 4,
-                color = GRAY,
-                background = WHITE,
+                bordersize = 1, radius = 10, padding = 4,
+                color = GRAY, background = WHITE,
                 CenterContainer:new{
                     dimen = Geom:new{w = tile_w - 10, h = tile_h - 10},
                     tile_content,
@@ -547,17 +553,18 @@ function CozyHomeScreen:buildUI()
 
     table.insert(items, sp(12))
 
-    -- ── Stats bar ──
+    -- ── Stats bar (placeholder — filled in by computeStatsDeferred) ──
     local show_stats = Database:getPref("home_show_stats_bar", "true") == "true"
     if show_stats then
-        local stats_text = self._cached_stats_text or self:computeStatsText()
+        local stats_tw = TextWidget:new{
+            face = Font:getFace("smallinfofont", 12),
+            text = self._cached_stats_text,
+            fgcolor = GRAY,
+        }
+        self._stats_widget = stats_tw  -- save reference for deferred update
         table.insert(items, CenterContainer:new{
             dimen = Geom:new{w = sw, h = 18},
-            TextWidget:new{
-                face = Font:getFace("smallinfofont", 12),
-                text = stats_text,
-                fgcolor = GRAY,
-            },
+            stats_tw,
         })
         table.insert(items, sp(4))
     end
@@ -571,8 +578,6 @@ function CozyHomeScreen:buildUI()
         table.insert(content, item)
     end
 
-    -- Wrap in ScrollableContainer so content is never clipped
-    -- on smaller screens or when many tiles are visible
     local scrollable = ScrollableContainer:new{
         dimen = Geom:new{w = sw, h = sh},
         show_parent = self,
@@ -587,31 +592,41 @@ function CozyHomeScreen:buildUI()
     }
 end
 
--- ─── Tile callbacks ───
+-- ─── Tile callbacks (lazy-load each screen module on demand) ───
 
 function CozyHomeScreen:getTileCallbacks()
     local home_screen = self
-    local function nav(module, reopen)
+
+    -- Creates a callback that lazy-loads a module and opens it.
+    -- The module is only require()'d the first time the tile is tapped.
+    local function nav(mod_name)
         return function()
             home_screen:closeAndRun(function()
-                module.show(home_screen.ui, function()
-                    Home.show(home_screen.ui, home_screen.on_close_callback)
-                end)
+                local mod = lazyRequire(mod_name)
+                if mod and mod.show then
+                    mod.show(home_screen.ui, function()
+                        Home.show(home_screen.ui, home_screen.on_close_callback)
+                    end)
+                else
+                    UIManager:show(InfoMessage:new{
+                        text = _("Module not available: ") .. mod_name,
+                        timeout = 3,
+                    })
+                end
             end)
         end
     end
+
     return {
-        books      = nav(Library),
-        highlights = nav(HighlightsScreen),
-        notebooks  = nav(Notebooks),
-        learnspace = nav(LearningSpace),
-        notecards  = nav(Notecards),
-        focus      = nav(FocusMode),
-        settings   = nav(Settings),
+        books      = nav("library"),
+        highlights = nav("highlights"),
+        notebooks  = nav("notebooks"),
+        learnspace = nav("learningspace"),
+        notecards  = nav("notecards"),
+        focus      = nav("focusmode"),
+        settings   = nav("settings"),
         koreader_settings = function()
-            -- Close Cozy Home, then open KOReader's built-in menu
             home_screen:closeAndRun(function()
-                -- Trigger the same menu that tapping the top of screen opens
                 if home_screen.ui and home_screen.ui.menu then
                     home_screen.ui.menu:onTapShowMenu()
                 end
@@ -620,15 +635,21 @@ function CozyHomeScreen:getTileCallbacks()
     }
 end
 
--- ─── Stats ───
+-- ─── Deferred Stats Computation ───
+-- Runs after the home screen is already visible on screen.
+-- Reads DocSettings for recent books and counts highlights —
+-- this is the expensive part that used to block rendering.
 
-function CozyHomeScreen:computeStatsText()
+function CozyHomeScreen:computeStatsDeferred()
+    local parts = {}
+
+    -- Count books in progress (cap at 10 to limit disk reads)
     local books_in_progress = 0
     pcall(function() ReadHistory:ensureRecent() end)
     local hist = ReadHistory.hist or {}
     local counted = 0
     for _, entry in ipairs(hist) do
-        if not entry.dim and counted < 20 then
+        if not entry.dim and counted < 10 then
             counted = counted + 1
             local ok, ds = pcall(DocSettings.open, DocSettings, entry.file)
             if ok and ds then
@@ -640,21 +661,22 @@ function CozyHomeScreen:computeStatsText()
         end
     end
 
-    -- Count highlights from recent books
+    -- Count highlights (cap at 5 books to limit disk reads)
     local highlight_count = 0
     pcall(function()
-        local HLLib = require("lib/highlights")
-        local counted_hl = 0
-        for _, entry in ipairs(hist) do
-            if not entry.dim and counted_hl < 10 then
-                counted_hl = counted_hl + 1
-                local c = HLLib.getHighlightCount(entry.file)
-                highlight_count = highlight_count + c
+        local HLLib = lazyRequire("lib/highlights")
+        if HLLib then
+            local counted_hl = 0
+            for _, entry in ipairs(hist) do
+                if not entry.dim and counted_hl < 5 then
+                    counted_hl = counted_hl + 1
+                    local c = HLLib.getHighlightCount(entry.file)
+                    highlight_count = highlight_count + c
+                end
             end
         end
     end)
 
-    local parts = {}
     if books_in_progress > 0 then
         table.insert(parts, books_in_progress .. " books in progress")
     end
@@ -662,6 +684,7 @@ function CozyHomeScreen:computeStatsText()
         table.insert(parts, highlight_count .. " highlights")
     end
 
+    -- Flashcard due count (only if already loaded)
     local fc_due = 0
     pcall(function()
         local fc_ok, CozyFlashcards = pcall(require, "cozyflashcards/main")
@@ -674,16 +697,30 @@ function CozyHomeScreen:computeStatsText()
         table.insert(parts, fc_due .. " cards due")
     end
 
-    -- Focus mode status
+    -- Focus mode stats (only if already loaded by main.lua)
     pcall(function()
-        local focus_stat = FocusMode.getStatsForHome()
-        if focus_stat then
-            table.insert(parts, focus_stat)
+        local FocusMode = _lazy_cache["focusmode"]
+        if FocusMode and FocusMode.getStatsForHome then
+            local focus_stat = FocusMode.getStatsForHome()
+            if focus_stat then table.insert(parts, focus_stat) end
         end
     end)
 
-    if #parts == 0 then return _("Welcome to Cozy Home") end
-    return table.concat(parts, "  ·  ")
+    local stats_text
+    if #parts == 0 then
+        stats_text = _("Welcome to Cozy Home")
+    else
+        stats_text = table.concat(parts, "  ·  ")
+    end
+
+    -- Update the stats widget text in-place and trigger a partial refresh
+    if self._stats_widget then
+        self._stats_widget:setText(stats_text)
+        UIManager:setDirty(self, function()
+            return "ui", self._stats_widget.dimen
+        end)
+    end
+    self._cached_stats_text = stats_text
 end
 
 -- ─── Helpers ───

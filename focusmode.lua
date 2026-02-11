@@ -846,6 +846,8 @@ function CozyFocusScreen:buildUI()
     table.insert(items, sp(4))
 
     -- ── Stats ──
+    -- When timer is active, show a compact summary (5 rows).
+    -- When idle, show all 10 rows — the idle view has a ScrollableContainer.
     local xp_in, xp_need = getLevelProgress()
     local pct = xp_need > 0 and math.floor((xp_in / xp_need) * 10) or 10
     local bar = string.rep("●", pct) .. string.rep("○", 10 - pct)
@@ -853,16 +855,44 @@ function CozyFocusScreen:buildUI()
     local mins = (game_data.total_minutes or 0) % 60
     local streak_pct = math.floor(getStreakBonus() * 100)
 
-    table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Level"), tostring(game_data.level or 1)))
-    table.insert(items, CozyUI.buildStatRow(sw, content_w, _("XP"), string.format("[%s] %d/%s", bar, xp_in, xp_need > 0 and tostring(xp_need) or "MAX")))
-    table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Total XP"), tostring(game_data.xp or 0)))
-    table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Sessions"), tostring(game_data.total_sessions or 0)))
-    table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Pages Read"), tostring(game_data.total_pages or 0)))
-    table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Time Focused"), string.format("%dh %dm", hours, mins)))
-    table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Cards Reviewed"), tostring(game_data.total_flashcards or 0)))
-    table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Streak"), string.format("%d days (+%d%% XP)", game_data.streak_days or 0, streak_pct)))
-    table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Freeze Tokens"), tostring(game_data.freeze_tokens or 0)))
-    table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Today"), string.format("%d sessions", game_data.sessions_today or 0)))
+    -- XP progress bar — displayed as a centered line above the stat rows
+    -- so it doesn't have to squeeze into a stat row value
+    local bar_text = TextWidget:new{
+        face = Font:getFace("cfont", 16),
+        text = string.format("Lv.%d  [%s]  %d/%s XP",
+            game_data.level or 1, bar, xp_in,
+            xp_need > 0 and tostring(xp_need) or "MAX"),
+        fgcolor = BLACK,
+        max_width = content_w,
+    }
+    table.insert(items, CenterContainer:new{
+        dimen = Geom:new{w = sw, h = bar_text:getSize().h + 4},
+        bar_text,
+    })
+    table.insert(items, sp(4))
+
+    if timer_state.active then
+        -- Compact stats: only the essentials
+        table.insert(items, CozyUI.buildStatRow(sw, content_w,
+            _("Streak"),
+            string.format("%d days (+%d%%)", game_data.streak_days or 0, streak_pct)))
+        table.insert(items, CozyUI.buildStatRow(sw, content_w,
+            _("Today"),
+            string.format("%d sessions", game_data.sessions_today or 0)))
+        table.insert(items, CozyUI.buildStatRow(sw, content_w,
+            _("Total"),
+            string.format("%dh %dm", hours, mins)))
+    else
+        -- Full stats (scrollable in idle view)
+        table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Total XP"), tostring(game_data.xp or 0)))
+        table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Sessions"), tostring(game_data.total_sessions or 0)))
+        table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Pages"), tostring(game_data.total_pages or 0)))
+        table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Time"), string.format("%dh %dm", hours, mins)))
+        table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Cards"), tostring(game_data.total_flashcards or 0)))
+        table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Streak"), string.format("%d days (+%d%%)", game_data.streak_days or 0, streak_pct)))
+        table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Freezes"), tostring(game_data.freeze_tokens or 0)))
+        table.insert(items, CozyUI.buildStatRow(sw, content_w, _("Today"), string.format("%d sessions", game_data.sessions_today or 0)))
+    end
     table.insert(items, sp(8))
 
     -- ── Action buttons ──

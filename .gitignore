@@ -1,6 +1,34 @@
-data/*.db 
-data/*.db-wal 
-data/*.db-shm 
-*.swp 
-.DS_Store 
-Thumbs.db 
+# ── SQLite databases (created at runtime on device) ──
+data/*.db
+data/*.db-wal
+data/*.db-shm
+*.db
+*.db-wal
+*.db-shm
+
+# ── OS junk ──
+.DS_Store
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+
+# ── Editor / IDE files ──
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# ── Lua bytecode ──
+*.luac
+luac.out
+
+# ── KOReader runtime files (generated on device) ──
+crash.log
+settings.reader.lua
+*.sdr/
+
+# ── Debug / test logs ──
+*.log
