@@ -273,6 +273,13 @@ end
 -- ─── Sub-screen builder ───
 
 function SettingsScreen:showSubScreen(title, rows)
+    -- Close any existing sub-screen before opening a new one
+    -- (prevents stacking when settings callbacks re-open the same screen)
+    if self._current_sub_screen then
+        UIManager:close(self._current_sub_screen)
+        self._current_sub_screen = nil
+    end
+
     local sw = Screen:getWidth()
     local sh = Screen:getHeight()
     local content_w = math.floor(sw * 0.85)
@@ -280,7 +287,10 @@ function SettingsScreen:showSubScreen(title, rows)
     local items = {}
 
     local function goBack()
-        UIManager:close(sub_screen)
+        if settings_screen._current_sub_screen then
+            UIManager:close(settings_screen._current_sub_screen)
+            settings_screen._current_sub_screen = nil
+        end
         settings_screen:buildUI()
         UIManager:setDirty(settings_screen, function() return "full", settings_screen.dimen end)
     end
@@ -341,6 +351,7 @@ function SettingsScreen:showSubScreen(title, rows)
     end
     function SubScreen:onClose()
         UIManager:close(self)
+        settings_screen._current_sub_screen = nil
         settings_screen:buildUI()
         UIManager:setDirty(settings_screen, function() return "full", settings_screen.dimen end)
         return true
@@ -351,8 +362,8 @@ function SettingsScreen:showSubScreen(title, rows)
         if self[1] then self[1]:paintTo(bb, x, y) end
     end
 
-    sub_screen = SubScreen:new{}
-    UIManager:show(sub_screen)
+    self._current_sub_screen = SubScreen:new{}
+    UIManager:show(self._current_sub_screen)
 end
 
 function SettingsScreen:buildSettingRow(row_def, content_w, row_h_ignored)
