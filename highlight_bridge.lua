@@ -106,9 +106,17 @@ end
 
 --- Step 2: Show back (answer) input.
 function HighlightBridge._showBackDialog(highlight_data, front_text)
+    -- Show the highlight and front text as context
+    local display_text = highlight_data.text
+    if #display_text > 150 then
+        display_text = display_text:sub(1, 147) .. "..."
+    end
+    local desc = _("Highlight: ") .. display_text .. "\n\n" .. _("Front: ") .. front_text
+
     local dialog
     dialog = InputDialog:new{
         title = _("Create Flashcard - Back"),
+        description = desc,
         input = "",
         input_hint = _("Answer"),
         buttons = {
