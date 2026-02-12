@@ -2,13 +2,12 @@
 
 A clean, customizable welcome screen that replaces KOReader's default file
 browser. Big tappable tiles, minimal clutter, and quick access to your books,
-highlights, flashcards, and study tools — all styled with the Cozy Design System
-for crisp e-ink rendering.
+highlights, flashcards, and study tools.
 
 **Author:** Kimberley Gonzalez ([@thekimberleyann](https://github.com/thekimberleyann))  
 **Version:** 0.12.1  
 **License:** MIT  
-**Devices:** Kobo Clara 2E (grayscale), Kobo Libra Colour  
+**Devices Tested on:** Kobo Clara 2E (grayscale), Kobo Libra Colour  
 **Updated:** February 11, 2026
 
 ---
