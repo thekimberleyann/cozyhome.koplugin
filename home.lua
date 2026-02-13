@@ -44,7 +44,6 @@ local HorizontalSpan = require("ui/widget/horizontalspan")
 local ImageWidget = require("ui/widget/imagewidget")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LeftContainer = require("ui/widget/container/leftcontainer")
-local OverlapGroup = require("ui/widget/overlapgroup")
 local RightContainer = require("ui/widget/container/rightcontainer")
 local TextWidget = require("ui/widget/textwidget")
 local VerticalGroup = require("ui/widget/verticalgroup")
@@ -571,6 +570,7 @@ function CozyHomeScreen:buildUI()
             face = Font:getFace("smallinfofont", 12),
             text = self._cached_stats_text,
             fgcolor = GRAY,
+            max_width = content_w,
         }
         self._stats_widget = stats_tw  -- save reference for deferred update
         table.insert(items, CenterContainer:new{

@@ -26,7 +26,6 @@ local HorizontalSpan = require("ui/widget/horizontalspan")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local LeftContainer = require("ui/widget/container/leftcontainer")
 local RightContainer = require("ui/widget/container/rightcontainer")
-local OverlapGroup = require("ui/widget/overlapgroup")
 local TextWidget = require("ui/widget/textwidget")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local PowerD = Device:getPowerDevice()
@@ -95,16 +94,16 @@ function StatusBar:buildContent()
         table.insert(right_group, item)
     end
 
-    local bar = OverlapGroup:new{
-        dimen = Geom:new{ w = content_w, h = self.height },
-        LeftContainer:new{
-            dimen = Geom:new{ w = content_w, h = self.height },
-            time_text,
-        },
-        RightContainer:new{
-            dimen = Geom:new{ w = content_w, h = self.height },
-            right_group,
-        },
+    -- Measure time and right group, use spacer for alignment
+    local time_w = time_text:getSize().w
+    local right_w = right_group:getSize().w
+    local bar_gap = 8
+    local spacer_w = math.max(0, content_w - time_w - right_w - bar_gap)
+    local bar = HorizontalGroup:new{
+        align = "center",
+        time_text,
+        HorizontalSpan:new{ width = spacer_w + bar_gap },
+        right_group,
     }
 
     self[1] = FrameContainer:new{

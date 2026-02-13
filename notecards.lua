@@ -45,7 +45,6 @@ local InputContainer = require("ui/widget/container/inputcontainer")
 local InputDialog = require("ui/widget/inputdialog")
 local LeftContainer = require("ui/widget/container/leftcontainer")
 local LineWidget = require("ui/widget/linewidget")
-local OverlapGroup = require("ui/widget/overlapgroup")
 local RightContainer = require("ui/widget/container/rightcontainer")
 local ScrollableContainer = require("ui/widget/container/scrollablecontainer")
 local Size = require("ui/size")
@@ -895,15 +894,26 @@ local function buildReviewHeader(sw, content_w, title_text, close_callback, stat
         left_widget = HorizontalGroup:new{HorizontalSpan:new{width = 1}}
     end
     local bar_h = math.max(title_widget:getSize().h + 4, close_btn:getSize().h)
-    local bar = OverlapGroup:new{
-        dimen = Geom:new{w = content_w, h = bar_h},
-        left_widget,
+    -- Measure left and right, give title the remaining space
+    local left_w = left_widget:getSize().w
+    local close_w = close_btn:getSize().w
+    local title_gap = 8
+    local title_max_w = math.max(0, content_w - left_w - close_w - title_gap * 2)
+    title_widget.max_width = title_max_w
+    local bar = HorizontalGroup:new{
+        align = "center",
         CenterContainer:new{
-            dimen = Geom:new{w = content_w, h = bar_h},
+            dimen = Geom:new{w = left_w, h = bar_h},
+            left_widget,
+        },
+        HorizontalSpan:new{width = title_gap},
+        CenterContainer:new{
+            dimen = Geom:new{w = title_max_w, h = bar_h},
             title_widget,
         },
-        HorizontalGroup:new{
-            HorizontalSpan:new{width = content_w - close_btn:getSize().w},
+        HorizontalSpan:new{width = title_gap},
+        CenterContainer:new{
+            dimen = Geom:new{w = close_w, h = bar_h},
             close_btn,
         },
     }
@@ -1580,16 +1590,17 @@ function NotecardsHub:buildStacksTab(items, sw, sh, content_w, pad)
                 fgcolor = deck.due_count > 0 and BLACK or GRAY,
             }
 
-            local top_row = OverlapGroup:new{
-                dimen = Geom:new{ w = content_w, h = name_w:getSize().h + 2 },
-                LeftContainer:new{
-                    dimen = Geom:new{ w = content_w, h = name_w:getSize().h + 2 },
-                    name_w,
-                },
-                RightContainer:new{
-                    dimen = Geom:new{ w = content_w, h = due_w:getSize().h + 2 },
-                    due_w,
-                },
+            local due_actual_w = due_w:getSize().w
+            local name_gap = 8
+            local name_max_w = math.max(0, content_w - due_actual_w - name_gap)
+            name_w.max_width = name_max_w
+            local top_row_h = math.max(name_w:getSize().h, due_w:getSize().h) + 2
+            local name_spacer = math.max(0, content_w - name_w:getSize().w - due_actual_w - name_gap)
+            local top_row = HorizontalGroup:new{
+                align = "center",
+                name_w,
+                HorizontalSpan:new{ width = name_spacer + name_gap },
+                due_w,
             }
 
             -- Counts line
@@ -1607,16 +1618,14 @@ function NotecardsHub:buildStacksTab(items, sw, sh, content_w, pad)
             -- Progress bar
             local prog_bar = buildProgressBar(deck, progress_bar_w)
 
-            local mid_row = OverlapGroup:new{
-                dimen = Geom:new{ w = content_w, h = counts_w:getSize().h + 2 },
-                LeftContainer:new{
-                    dimen = Geom:new{ w = content_w, h = counts_w:getSize().h + 2 },
-                    counts_w,
-                },
-                RightContainer:new{
-                    dimen = Geom:new{ w = content_w, h = prog_bar:getSize().h + 2 },
-                    prog_bar,
-                },
+            local prog_actual_w = prog_bar:getSize().w
+            local counts_gap = 8
+            local counts_spacer = math.max(0, content_w - counts_w:getSize().w - prog_actual_w - counts_gap)
+            local mid_row = HorizontalGroup:new{
+                align = "center",
+                counts_w,
+                HorizontalSpan:new{ width = counts_spacer + counts_gap },
+                prog_bar,
             }
 
             -- Total/mastered line
@@ -1859,16 +1868,15 @@ function NotecardsHub:buildAllCardsTab(items, sw, sh, content_w, pad)
         HorizontalSpan:new{ width = 8 },
         book_btn,
     }
-    local filter_bar = OverlapGroup:new{
-        dimen = Geom:new{ w = content_w, h = 36 },
-        LeftContainer:new{
-            dimen = Geom:new{ w = content_w, h = 36 },
-            left_filters,
-        },
-        RightContainer:new{
-            dimen = Geom:new{ w = content_w, h = 36 },
-            new_btn,
-        },
+    local filters_w = left_filters:getSize().w
+    local new_btn_w = new_btn:getSize().w
+    local filter_gap = 8
+    local filter_spacer = math.max(0, content_w - filters_w - new_btn_w - filter_gap)
+    local filter_bar = HorizontalGroup:new{
+        align = "center",
+        left_filters,
+        HorizontalSpan:new{ width = filter_spacer + filter_gap },
+        new_btn,
     }
     table.insert(items, FrameContainer:new{
         dimen = Geom:new{ w = sw, h = 36 },
@@ -2029,11 +2037,18 @@ function NotecardsHub:buildAllCardsTab(items, sw, sh, content_w, pad)
                 show_parent = self,
             }
 
-            local nav_group = OverlapGroup:new{
-                dimen = Geom:new{ w = content_w, h = nav_h },
-                LeftContainer:new{ dimen = Geom:new{ w = content_w, h = nav_h }, prev_btn },
-                CenterContainer:new{ dimen = Geom:new{ w = content_w, h = nav_h }, page_label },
-                RightContainer:new{ dimen = Geom:new{ w = content_w, h = nav_h }, next_btn },
+            local prev_w = prev_btn:getSize().w
+            local next_w = next_btn:getSize().w
+            local nav_gap = 8
+            local nav_label_w = math.max(0, content_w - prev_w - next_w - nav_gap * 2)
+            page_label.max_width = nav_label_w
+            local nav_group = HorizontalGroup:new{
+                align = "center",
+                CenterContainer:new{ dimen = Geom:new{ w = prev_w, h = nav_h }, prev_btn },
+                HorizontalSpan:new{ width = nav_gap },
+                CenterContainer:new{ dimen = Geom:new{ w = nav_label_w, h = nav_h }, page_label },
+                HorizontalSpan:new{ width = nav_gap },
+                CenterContainer:new{ dimen = Geom:new{ w = next_w, h = nav_h }, next_btn },
             }
             table.insert(items, FrameContainer:new{
                 dimen = Geom:new{ w = sw, h = nav_h },

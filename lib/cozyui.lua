@@ -32,7 +32,6 @@ local RightContainer = require("ui/widget/container/rightcontainer")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
 local LineWidget = require("ui/widget/linewidget")
-local OverlapGroup = require("ui/widget/overlapgroup")
 local TextWidget = require("ui/widget/textwidget")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
@@ -71,19 +70,27 @@ function CozyUI.buildCozyHeader(sw, content_w, title_text, close_callback)
         callback = close_callback,
         bordersize = 0, text_font_size = 20, margin = 0, padding = 0,
     }
-    local bar = OverlapGroup:new{
-        dimen = Geom:new{w = content_w, h = title_widget:getSize().h + 6},
+    -- Measure close button, give title the rest
+    local close_w = close_btn:getSize().w
+    local title_gap = 8
+    local title_max_w = math.max(0, content_w - close_w - title_gap)
+    title_widget.max_width = title_max_w
+    local bar_h = math.max(title_widget:getSize().h, close_btn:getSize().h) + 6
+
+    local bar = HorizontalGroup:new{
+        align = "center",
         CenterContainer:new{
-            dimen = Geom:new{w = content_w, h = title_widget:getSize().h + 6},
+            dimen = Geom:new{w = title_max_w, h = bar_h},
             title_widget,
         },
-        HorizontalGroup:new{
-            HorizontalSpan:new{width = content_w - close_btn:getSize().w},
+        HorizontalSpan:new{width = title_gap},
+        CenterContainer:new{
+            dimen = Geom:new{w = close_w, h = bar_h},
             close_btn,
         },
     }
     return CenterContainer:new{
-        dimen = Geom:new{w = sw, h = bar:getSize().h},
+        dimen = Geom:new{w = sw, h = bar_h},
         bar,
     }
 end
@@ -165,18 +172,27 @@ function CozyUI.buildScreenHeader(opts)
         right_group = exit_btn
     end
 
-    local bar = OverlapGroup:new{
-        dimen = Geom:new{w = content_w, h = bar_h},
-        LeftContainer:new{
-            dimen = Geom:new{w = content_w, h = bar_h},
+    -- Measure buttons first, give title the remaining space
+    local back_w = back_btn:getSize().w
+    local right_w = right_group:getSize().w
+    local title_gap = 8  -- minimum gap between title and buttons
+    local title_max_w = math.max(0, content_w - back_w - right_w - title_gap * 2)
+    title_widget.max_width = title_max_w
+
+    local bar = HorizontalGroup:new{
+        align = "center",
+        CenterContainer:new{
+            dimen = Geom:new{w = back_w, h = bar_h},
             back_btn,
         },
+        HorizontalSpan:new{width = title_gap},
         CenterContainer:new{
-            dimen = Geom:new{w = content_w, h = bar_h},
+            dimen = Geom:new{w = title_max_w, h = bar_h},
             title_widget,
         },
-        RightContainer:new{
-            dimen = Geom:new{w = content_w, h = bar_h},
+        HorizontalSpan:new{width = title_gap},
+        CenterContainer:new{
+            dimen = Geom:new{w = right_w, h = bar_h},
             right_group,
         },
     }
