@@ -65,8 +65,8 @@ local BookScanner = require("lib/bookscanner")
 -- CONSTANTS
 -- ============================================
 
-local ITEMS_PER_PAGE = 8
-local BOOKS_PER_PAGE = 10
+-- Items-per-page is now calculated dynamically in each screen/tab
+-- based on available screen height and row size.
 
 -- ============================================
 -- ICON CHOICES for classes
@@ -459,14 +459,17 @@ function ClassListScreen:buildUI()
         })
     else
         -- Paginate
-        local total_pages = math.ceil(#classes / ITEMS_PER_PAGE)
+        local row_h = Screen:scaleBySize(60)
+        local reserved_h = Screen:scaleBySize(180)  -- header + separator + new button + pagination
+        local available_h = screen_h - reserved_h
+        local items_per_page = math.max(3, math.floor(available_h / (row_h + 1)))
+
+        local total_pages = math.ceil(#classes / items_per_page)
         if self.current_page > total_pages then self.current_page = total_pages end
         if self.current_page < 1 then self.current_page = 1 end
 
-        local start_idx = (self.current_page - 1) * ITEMS_PER_PAGE + 1
-        local end_idx = math.min(start_idx + ITEMS_PER_PAGE - 1, #classes)
-
-        local row_h = 60
+        local start_idx = (self.current_page - 1) * items_per_page + 1
+        local end_idx = math.min(start_idx + items_per_page - 1, #classes)
 
         for i = start_idx, end_idx do
             local cls = classes[i]
@@ -1225,14 +1228,17 @@ function ClassDetailScreen:buildBooksTab(items, screen_w, screen_h, content_w, p
     end
 
     -- Paginate
-    local total_pages = math.ceil(#books / BOOKS_PER_PAGE)
+    local row_h = Screen:scaleBySize(52)
+    local reserved_h = Screen:scaleBySize(280)  -- header + tabs + progress + pagination
+    local available_h = screen_h - reserved_h
+    local items_per_page = math.max(3, math.floor(available_h / (row_h + 1)))
+
+    local total_pages = math.ceil(#books / items_per_page)
     if self.books_page > total_pages then self.books_page = total_pages end
     if self.books_page < 1 then self.books_page = 1 end
 
-    local start_idx = (self.books_page - 1) * BOOKS_PER_PAGE + 1
-    local end_idx = math.min(start_idx + BOOKS_PER_PAGE - 1, #books)
-
-    local row_h = 52
+    local start_idx = (self.books_page - 1) * items_per_page + 1
+    local end_idx = math.min(start_idx + items_per_page - 1, #books)
 
     for i = start_idx, end_idx do
         local book = books[i]
@@ -1390,8 +1396,6 @@ end
 -- ============================================
 -- NOTECARDS TAB
 -- ============================================
-
-local CARDS_PER_PAGE = 8
 
 function ClassDetailScreen:buildNotecardsTab(items, screen_w, screen_h, content_w, pad)
     local detail_screen = self
@@ -1552,13 +1556,16 @@ function ClassDetailScreen:buildNotecardsTab(items, screen_w, screen_h, content_
     end
 
     -- Paginate
-    local total_pages = math.ceil(#active_cards / CARDS_PER_PAGE)
+    local row_h = Screen:scaleBySize(56)
+    local reserved_h = Screen:scaleBySize(280)  -- header + tabs + progress + pagination
+    local available_h = screen_h - reserved_h
+    local items_per_page = math.max(3, math.floor(available_h / (row_h + 1)))
+
+    local total_pages = math.ceil(#active_cards / items_per_page)
     if self.notecards_page > total_pages then self.notecards_page = total_pages end
     if self.notecards_page < 1 then self.notecards_page = 1 end
-    local start_idx = (self.notecards_page - 1) * CARDS_PER_PAGE + 1
-    local end_idx = math.min(start_idx + CARDS_PER_PAGE - 1, #active_cards)
-
-    local row_h = 56
+    local start_idx = (self.notecards_page - 1) * items_per_page + 1
+    local end_idx = math.min(start_idx + items_per_page - 1, #active_cards)
 
     for i = start_idx, end_idx do
         local card = active_cards[i]
@@ -1806,8 +1813,6 @@ end
 -- HIGHLIGHTS TAB
 -- ============================================
 
-local HL_PER_PAGE = 8
-
 function ClassDetailScreen:buildHighlightsTab(items, screen_w, screen_h, content_w, pad)
     local detail_screen = self
 
@@ -1896,13 +1901,16 @@ function ClassDetailScreen:buildHighlightsTab(items, screen_w, screen_h, content
     end
 
     -- Paginate
-    local total_pages = math.ceil(#all_hl / HL_PER_PAGE)
+    local row_h = Screen:scaleBySize(60)
+    local reserved_h = Screen:scaleBySize(280)  -- header + tabs + progress + pagination
+    local available_h = screen_h - reserved_h
+    local items_per_page = math.max(3, math.floor(available_h / (row_h + 1)))
+
+    local total_pages = math.ceil(#all_hl / items_per_page)
     if self.highlights_page > total_pages then self.highlights_page = total_pages end
     if self.highlights_page < 1 then self.highlights_page = 1 end
-    local start_idx = (self.highlights_page - 1) * HL_PER_PAGE + 1
-    local end_idx = math.min(start_idx + HL_PER_PAGE - 1, #all_hl)
-
-    local row_h = 60
+    local start_idx = (self.highlights_page - 1) * items_per_page + 1
+    local end_idx = math.min(start_idx + items_per_page - 1, #all_hl)
 
     for i = start_idx, end_idx do
         local hl = all_hl[i]
@@ -2182,15 +2190,17 @@ function BookPickerScreen:buildUI()
 
     -- Book list (paginated)
     local books = self.books or {}
-    local per_page = BOOKS_PER_PAGE
-    local total_pages = math.max(1, math.ceil(#books / per_page))
+    local row_h = Screen:scaleBySize(48)
+    local reserved_h = Screen:scaleBySize(200)  -- header + hint + pagination
+    local available_h = screen_h - reserved_h
+    local items_per_page = math.max(3, math.floor(available_h / (row_h + 1)))
+
+    local total_pages = math.max(1, math.ceil(#books / items_per_page))
     if self.current_page > total_pages then self.current_page = total_pages end
     if self.current_page < 1 then self.current_page = 1 end
 
-    local start_idx = (self.current_page - 1) * per_page + 1
-    local end_idx = math.min(start_idx + per_page - 1, #books)
-
-    local row_h = 48
+    local start_idx = (self.current_page - 1) * items_per_page + 1
+    local end_idx = math.min(start_idx + items_per_page - 1, #books)
 
     for i = start_idx, end_idx do
         local book = books[i]
