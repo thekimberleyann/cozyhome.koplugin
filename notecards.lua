@@ -66,7 +66,6 @@ local Database = require("lib/database")
 -- CONSTANTS
 -- ============================================
 
-local CARDS_PER_PAGE = 8
 local TAB_STACKS = "stacks"
 local TAB_ALLCARDS = "allcards"
 
@@ -1885,8 +1884,14 @@ function NotecardsHub:buildAllCardsTab(items, sw, sh, content_w, pad)
     table.insert(items, VerticalSpan:new{ width = 4 })
 
     -- Fetch cards
+    -- Dynamic items-per-page calculation (matches learningspace.lua pattern)
+    local row_h = Screen:scaleBySize(68)
+    local reserved_h = Screen:scaleBySize(260)  -- header + review btn + tabs + filter bar + pagination
+    local available_h = sh - reserved_h
+    local items_per_page = math.max(3, math.floor(available_h / (row_h + 1)))
+
     local cards, total_count = CardDB.getCards(
-        self.current_page, CARDS_PER_PAGE, self.book_filter, self.deck_filter
+        self.current_page, items_per_page, self.book_filter, self.deck_filter
     )
 
     if total_count == 0 then
@@ -1903,8 +1908,7 @@ function NotecardsHub:buildAllCardsTab(items, sw, sh, content_w, pad)
             },
         })
     else
-        local row_h = Screen:scaleBySize(68)
-        local total_pages = math.ceil(total_count / CARDS_PER_PAGE)
+        local total_pages = math.ceil(total_count / items_per_page)
         local text_area_w = content_w - pad
 
         for idx, card in ipairs(cards) do
