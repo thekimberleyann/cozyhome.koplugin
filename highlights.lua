@@ -61,7 +61,6 @@ local TextWidget = require("ui/widget/textwidget")
 local TextBoxWidget = require("ui/widget/textboxwidget")
 local Button = require("ui/widget/button")
 local LineWidget = require("ui/widget/linewidget")
-local OverlapGroup = require("ui/widget/overlapgroup")
 local ScrollableContainer = require("ui/widget/container/scrollablecontainer")
 local GestureRange = require("ui/gesturerange")
 
@@ -964,13 +963,16 @@ function HighlightsHub:buildUI()
         if self.search then
             empty_msg = _("No highlights match your search.")
         end
+        local empty_tw = TextBoxWidget:new{
+            face = Font:getFace("cfont", 18),
+            text = empty_msg,
+            width = math.floor(content_w * 0.85),
+            fgcolor = DARK_GRAY,
+            alignment = "center",
+        }
         table.insert(items, CenterContainer:new{
-            dimen = Geom:new{ w = sw, h = 30 },
-            TextWidget:new{
-                face = Font:getFace("cfont", 18),
-                text = empty_msg,
-                fgcolor = DARK_GRAY,
-            },
+            dimen = Geom:new{ w = sw, h = empty_tw:getSize().h },
+            empty_tw,
         })
         self:assembleUI(items, sw, sh)
         return
@@ -1092,11 +1094,18 @@ function HighlightsHub:buildUI()
             callback = function() hub.current_page = hub.current_page + 1; hub:refresh() end,
             bordersize = 0, text_font_size = 14, padding = 4, show_parent = self,
         }
-        local nav_group = OverlapGroup:new{
-            dimen = Geom:new{ w = content_w, h = 36 },
-            LeftContainer:new{ dimen = Geom:new{ w = content_w, h = 36 }, prev_btn },
-            CenterContainer:new{ dimen = Geom:new{ w = content_w, h = 36 }, page_label },
-            RightContainer:new{ dimen = Geom:new{ w = content_w, h = 36 }, next_btn },
+        local prev_w = prev_btn:getSize().w
+        local next_w = next_btn:getSize().w
+        local label_gap = 8
+        local label_max_w = math.max(0, content_w - prev_w - next_w - label_gap * 2)
+        page_label.max_width = label_max_w
+        local nav_group = HorizontalGroup:new{
+            align = "center",
+            CenterContainer:new{ dimen = Geom:new{ w = prev_w, h = 36 }, prev_btn },
+            HorizontalSpan:new{ width = label_gap },
+            CenterContainer:new{ dimen = Geom:new{ w = label_max_w, h = 36 }, page_label },
+            HorizontalSpan:new{ width = label_gap },
+            CenterContainer:new{ dimen = Geom:new{ w = next_w, h = 36 }, next_btn },
         }
         table.insert(items, FrameContainer:new{
             dimen = Geom:new{ w = sw, h = 36 },

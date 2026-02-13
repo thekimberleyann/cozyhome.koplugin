@@ -36,7 +36,6 @@ local InputContainer = require("ui/widget/container/inputcontainer")
 local InputDialog = require("ui/widget/inputdialog")
 local LeftContainer = require("ui/widget/container/leftcontainer")
 local LineWidget = require("ui/widget/linewidget")
-local OverlapGroup = require("ui/widget/overlapgroup")
 local RightContainer = require("ui/widget/container/rightcontainer")
 local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
@@ -210,14 +209,20 @@ function SettingsScreen:buildCategoryRow(cat, content_w, row_h_ignored)
     local icon = TextWidget:new{
         face = Font:getFace("tfont", 22), text = cat.icon_text, fgcolor = BLACK,
     }
+    local arrow = TextWidget:new{
+        face = Font:getFace("cfont", 17), text = "▸", fgcolor = GRAY,
+    }
+
+    -- Calculate label width from remaining space, then constrain text
+    local label_w = content_w - icon_w_sz - arrow_w - 36
+
     local label = TextWidget:new{
         face = Font:getFace("cfont", 17), text = cat.label, fgcolor = BLACK,
+        max_width = label_w,
     }
     local desc = TextWidget:new{
         face = Font:getFace("smallinfofont", 13), text = cat.description, fgcolor = DARK_GRAY,
-    }
-    local arrow = TextWidget:new{
-        face = Font:getFace("cfont", 17), text = "▸", fgcolor = GRAY,
+        max_width = label_w,
     }
 
     local label_group = VerticalGroup:new{
@@ -227,8 +232,6 @@ function SettingsScreen:buildCategoryRow(cat, content_w, row_h_ignored)
     -- Measure actual content height and add padding
     local text_h = label:getSize().h + 2 + desc:getSize().h
     local row_h = math.max(48, text_h + v_pad * 2)
-
-    local label_w = content_w - icon_w_sz - arrow_w - 36
     local row_content = HorizontalGroup:new{
         align = "center",
         HorizontalSpan:new{width = 8},
@@ -378,11 +381,20 @@ function SettingsScreen:buildSettingRow(row_def, content_w, row_h_ignored)
         face = Font:getFace("cfont", 15), text = value_str, fgcolor = DARK_GRAY,
     }
 
+    -- Measure value first, give label the remaining space
+    local value_w = value_text:getSize().w
+    local row_gap = 12  -- gap between label and value
+    local label_max_w = math.max(0, content_w - value_w - row_gap)
+
+    -- Apply max_width to label text so it truncates on small screens
+    label_text.max_width = label_max_w
+
     local label_group
     local content_h
     if row_def.description then
         local desc_text = TextWidget:new{
             face = Font:getFace("smallinfofont", 12), text = row_def.description, fgcolor = GRAY,
+            max_width = label_max_w,
         }
         label_group = VerticalGroup:new{ align = "left", label_text, sp(2), desc_text }
         content_h = label_text:getSize().h + 2 + desc_text:getSize().h
@@ -394,14 +406,15 @@ function SettingsScreen:buildSettingRow(row_def, content_w, row_h_ignored)
     -- Use the taller of the label group or the value text, plus padding
     local row_h = math.max(40, math.max(content_h, value_text:getSize().h) + v_pad * 2)
 
-    local row_content = OverlapGroup:new{
-        dimen = Geom:new{w = content_w, h = row_h},
+    local row_content = HorizontalGroup:new{
+        align = "center",
         LeftContainer:new{
-            dimen = Geom:new{w = content_w * 0.65, h = row_h},
+            dimen = Geom:new{w = label_max_w, h = row_h},
             label_group,
         },
+        HorizontalSpan:new{width = row_gap},
         RightContainer:new{
-            dimen = Geom:new{w = content_w, h = row_h},
+            dimen = Geom:new{w = value_w, h = row_h},
             value_text,
         },
     }

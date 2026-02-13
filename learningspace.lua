@@ -44,7 +44,6 @@ local InputContainer = require("ui/widget/container/inputcontainer")
 local InputDialog = require("ui/widget/inputdialog")
 local LeftContainer = require("ui/widget/container/leftcontainer")
 local LineWidget = require("ui/widget/linewidget")
-local OverlapGroup = require("ui/widget/overlapgroup")
 local RightContainer = require("ui/widget/container/rightcontainer")
 local Size = require("ui/size")
 local TextWidget = require("ui/widget/textwidget")
@@ -1049,19 +1048,21 @@ function ClassDetailScreen:buildUI()
         hl_tab_btn,
     }
 
-    -- Use OverlapGroup so tabs are left-aligned and + Add is right-aligned
-    local tab_bar_content = OverlapGroup:new{
-        dimen = Geom:new{ w = content_w, h = 36 },
-        LeftContainer:new{
-            dimen = Geom:new{ w = content_w, h = 36 },
-            tab_buttons,
-        },
-    }
+    -- Measure tabs and add button, allocate space explicitly
+    local tabs_w = tab_buttons:getSize().w
+    local add_w = add_btn and add_btn:getSize().w or 0
+    local tab_gap = 8
+    local tab_bar_content
     if add_btn then
-        table.insert(tab_bar_content, RightContainer:new{
-            dimen = Geom:new{ w = content_w, h = 36 },
+        local spacer_w = math.max(0, content_w - tabs_w - add_w - tab_gap)
+        tab_bar_content = HorizontalGroup:new{
+            align = "center",
+            tab_buttons,
+            HorizontalSpan:new{ width = spacer_w + tab_gap },
             add_btn,
-        })
+        }
+    else
+        tab_bar_content = tab_buttons
     end
 
     table.insert(items, CenterContainer:new{
@@ -1130,14 +1131,8 @@ function ClassDetailScreen:buildUI()
             end
         end
 
-        -- Use OverlapGroup so progress text is left-aligned and Resume is right-aligned
-        local progress_overlap = OverlapGroup:new{
-            dimen = Geom:new{ w = content_w, h = 22 },
-            LeftContainer:new{
-                dimen = Geom:new{ w = content_w, h = 22 },
-                progress_tw,
-            },
-        }
+        -- Measure progress text and optional resume button, allocate space explicitly
+        local progress_row
         if resume_target then
             local resume_btn = Button:new{
                 text = _("Resume >>"),
@@ -1150,10 +1145,20 @@ function ClassDetailScreen:buildUI()
                 padding = 2,
                 show_parent = self,
             }
-            table.insert(progress_overlap, RightContainer:new{
-                dimen = Geom:new{ w = content_w, h = 22 },
+            local resume_w = resume_btn:getSize().w
+            local prog_gap = 8
+            local prog_max_w = math.max(0, content_w - resume_w - prog_gap)
+            progress_tw.max_width = prog_max_w
+            local spacer_w = math.max(0, content_w - progress_tw:getSize().w - resume_w - prog_gap)
+            progress_row = HorizontalGroup:new{
+                align = "center",
+                progress_tw,
+                HorizontalSpan:new{ width = spacer_w + prog_gap },
                 resume_btn,
-            })
+            }
+        else
+            progress_tw.max_width = content_w
+            progress_row = progress_tw
         end
 
         table.insert(items, CenterContainer:new{
@@ -1161,7 +1166,7 @@ function ClassDetailScreen:buildUI()
             FrameContainer:new{
                 dimen = Geom:new{ w = content_w, h = 22 },
                 bordersize = 0, padding = 0,
-                progress_overlap,
+                progress_row,
             },
         })
         table.insert(items, VerticalSpan:new{ width = 4 })
