@@ -3,7 +3,7 @@
 --   ⊹  File:         lib/kobo.lua
 --   ⊹  Author:       Kimberley Gonzalez (thekimberleyann)
 --   ⊹  Date:         2026-01-30
---   ⊹  Modified:     2026-02-08
+--   ⊹  Modified:     2026-02-14
 --   ⊹  Project:      Cozy Home for KOReader
 --
 --   🎀 Description:
@@ -22,12 +22,31 @@
 local SQ3 = require("lua-ljsqlite3/init")
 local logger = require("logger")
 local lfs = require("libs/libkoreader-lfs")
+local Config = require("config")
 local Kobo = {}
 
 -- ============================================
 -- CONSTANTS
 -- ============================================
 local KOBO_DB_PATH = "/mnt/onboard/.kobo/KoboReader.sqlite"
+
+-- ============================================
+-- SESSION-LEVEL KOBO HIGHLIGHT CACHE
+-- ============================================
+-- Kobo OS cannot modify highlights while KOReader is
+-- running, so this cache never needs invalidation during
+-- normal use. Cleared only by the manual "Refresh All"
+-- button (Phase 6) via Kobo.clearCache().
+-- See: highlight_cache_implementation_plan.md
+
+local _kobo_cache = {
+    -- Per-book highlight results, keyed by book_path
+    books = {},
+    -- Result of getAllBooksWithHighlights()
+    all_books = nil,
+    -- Result of getTotalHighlightCount()
+    total_count = nil,
+}
 
 -- ============================================
 -- PRIVATE HELPER FUNCTIONS
@@ -108,6 +127,15 @@ end
 -- @return table: Array of highlight entries
 -- @return number: Count of highlights
 function Kobo.getBookHighlights(book_path)
+    -- Check cache first
+    if book_path and _kobo_cache.books[book_path] then
+        local cached = _kobo_cache.books[book_path]
+        if Config.DEBUG.verbose_logging then
+            logger.dbg("CozyHome: Kobo cache hit for", book_path, "(", cached.count, "items)")
+        end
+        return cached.highlights, cached.count
+    end
+
     local db = openDatabase()
     
     if not db then
@@ -190,8 +218,21 @@ function Kobo.getBookHighlights(book_path)
         return {}, 0
     end
     
-    logger.dbg("Kobo: Found", #highlights, "highlights for", book_path)
+    if Config.DEBUG.verbose_logging then
+        logger.dbg("Kobo: Found", #highlights, "highlights for", book_path)
+    end
     
+    -- Cache the result for the rest of the session
+    if book_path then
+        _kobo_cache.books[book_path] = {
+            highlights = highlights,
+            count = #highlights,
+        }
+        if Config.DEBUG.verbose_logging then
+            logger.dbg("CozyHome: Kobo cached highlights for", book_path)
+        end
+    end
+
     return highlights, #highlights
 end
 
@@ -199,6 +240,14 @@ end
 -- SECURITY: Uses static SQL (no user input) - safe
 -- @return table: Array of {path, filename, highlight_count}
 function Kobo.getAllBooksWithHighlights()
+    -- Check cache first
+    if _kobo_cache.all_books then
+        if Config.DEBUG.verbose_logging then
+            logger.dbg("CozyHome: Kobo cache hit for getAllBooksWithHighlights (", #_kobo_cache.all_books, "books)")
+        end
+        return _kobo_cache.all_books
+    end
+
     local db = openDatabase()
     
     if not db then
@@ -250,6 +299,9 @@ function Kobo.getAllBooksWithHighlights()
     
     logger.dbg("Kobo: Found", #books, "books with highlights")
     
+    -- Cache for the rest of the session
+    _kobo_cache.all_books = books
+
     return books
 end
 
@@ -323,6 +375,14 @@ end
 -- SECURITY: Uses static SQL (no user input) - safe
 -- @return number: Total highlights in Kobo database
 function Kobo.getTotalHighlightCount()
+    -- Check cache first
+    if _kobo_cache.total_count then
+        if Config.DEBUG.verbose_logging then
+            logger.dbg("CozyHome: Kobo cache hit for getTotalHighlightCount (", _kobo_cache.total_count, ")")
+        end
+        return _kobo_cache.total_count
+    end
+
     local db = openDatabase()
     
     if not db then
@@ -346,6 +406,9 @@ function Kobo.getTotalHighlightCount()
         logger.warn("Kobo: Count query error:", result)
     end
     
+    -- Cache for the rest of the session
+    _kobo_cache.total_count = count
+
     return count
 end
 
@@ -416,6 +479,35 @@ function Kobo.searchAllHighlights(query)
     end
     
     return results_list
+end
+
+-- ============================================
+-- CACHE MANAGEMENT
+-- ============================================
+
+--- Clears the entire Kobo highlight cache.
+-- Called by the manual "Refresh All Highlights" button.
+-- No per-book invalidation needed — Kobo OS can't change
+-- highlights while KOReader is running.
+function Kobo.clearCache()
+    local book_count = 0
+    for _ in pairs(_kobo_cache.books) do book_count = book_count + 1 end
+    logger.dbg("CozyHome: Clearing Kobo cache (", book_count, "book entries,",
+        _kobo_cache.all_books and #_kobo_cache.all_books or 0, "all-books,",
+        "total_count:", _kobo_cache.total_count or "nil", ")")
+    _kobo_cache = {
+        books = {},
+        all_books = nil,
+        total_count = nil,
+    }
+end
+
+--- Returns whether any Kobo data is currently cached
+-- @return boolean
+function Kobo.isCached()
+    return _kobo_cache.all_books ~= nil
+        or _kobo_cache.total_count ~= nil
+        or next(_kobo_cache.books) ~= nil
 end
 
 return Kobo

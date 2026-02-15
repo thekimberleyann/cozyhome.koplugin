@@ -67,6 +67,10 @@ local TOOLBAR_HEIGHT = 44
 local TOOL_PEN = "pen"
 local TOOL_ERASER = "eraser"
 
+-- Resource limits to prevent memory exhaustion during long drawing sessions
+local MAX_POINTS_PER_STROKE = 10000
+local MAX_STROKES_PER_PAGE = 5000
+
 -- ============================================
 -- NOTEBOOK LIST SCREEN
 -- ============================================
@@ -665,7 +669,7 @@ function CanvasScreen:setupStylusInput()
             return canvas:handleStylusSlot(input, slot)
         end)
         self.stylus_callback_registered = true
-        logger.info("CozyHome Notebooks: stylus callback registered")
+        logger.dbg("CozyHome Notebooks: stylus callback registered")
     end
 
     -- Also register touch zones as fallback
@@ -732,16 +736,23 @@ function CanvasScreen:transformCoordinates(x, y)
     local sw = Screen:getWidth()
     local sh = Screen:getHeight()
 
+    local tx, ty
     if rotation == 0 then
-        return x, y
+        tx, ty = x, y
     elseif rotation == 1 then
-        return sw - y, x
+        tx, ty = sw - y, x
     elseif rotation == 2 then
-        return sw - x, sh - y
+        tx, ty = sw - x, sh - y
     elseif rotation == 3 then
-        return y, sh - x
+        tx, ty = y, sh - x
+    else
+        tx, ty = x, y
     end
-    return x, y
+
+    -- Clamp to screen bounds to guard against hardware/driver anomalies
+    tx = math.max(0, math.min(tx, sw - 1))
+    ty = math.max(0, math.min(ty, sh - 1))
+    return tx, ty
 end
 
 function CanvasScreen:handleStylusSlot(input, slot)
@@ -793,6 +804,27 @@ function CanvasScreen:handleStylusSlot(input, slot)
                 self:repaintFull()
             end
         elseif self.current_stroke then
+            -- Auto-split stroke if point limit reached
+            if #self.current_stroke.points >= MAX_POINTS_PER_STROKE then
+                table.insert(self.strokes, self.current_stroke)
+                table.insert(self.undo_stack, { type = "add", stroke_idx = #self.strokes })
+                self.current_stroke = {
+                    points = {{ x = x, y = y }},
+                    width = self.pen_width,
+                }
+            end
+
+            -- Enforce page stroke limit
+            if #self.strokes >= MAX_STROKES_PER_PAGE then
+                UIManager:show(InfoMessage:new{
+                    text = _("Page limit reached. Please start a new page."),
+                    timeout = 3,
+                })
+                self.current_stroke = nil
+                self.pen_down = false
+                return true
+            end
+
             table.insert(self.current_stroke.points, { x = x, y = y })
             local n = #self.current_stroke.points
             local width = self.current_stroke.width
@@ -923,6 +955,26 @@ function CanvasScreen:onCanvasPan(ges)
         if ges.start_pos then
             table.insert(self.current_stroke.points, { x = ges.start_pos.x, y = ges.start_pos.y })
         end
+    end
+
+    -- Auto-split stroke if point limit reached
+    if #self.current_stroke.points >= MAX_POINTS_PER_STROKE then
+        table.insert(self.strokes, self.current_stroke)
+        table.insert(self.undo_stack, { type = "add", stroke_idx = #self.strokes })
+        self.current_stroke = {
+            points = {{ x = ges.pos.x, y = ges.pos.y }},
+            width = self.pen_width,
+        }
+    end
+
+    -- Enforce page stroke limit
+    if #self.strokes >= MAX_STROKES_PER_PAGE then
+        UIManager:show(InfoMessage:new{
+            text = _("Page limit reached. Please start a new page."),
+            timeout = 3,
+        })
+        self.current_stroke = nil
+        return true
     end
 
     table.insert(self.current_stroke.points, { x = ges.pos.x, y = ges.pos.y })

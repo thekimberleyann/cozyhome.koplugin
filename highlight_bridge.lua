@@ -252,6 +252,14 @@ function HighlightBridge._saveCard(highlight_data, front_text, back_text, catego
             Database:addCardToCategory(card_id, category_id)
         end
 
+        -- Invalidate highlight cache for this book (belt-and-suspenders).
+        -- Only if lib/highlights is already loaded — don't force-load it.
+        local HL = package.loaded["lib/highlights"]
+        if HL and highlight_data.book_path then
+            HL.invalidateCache(highlight_data.book_path)
+            logger.dbg("CozyHome HighlightBridge: Invalidated highlight cache for", highlight_data.book_path)
+        end
+
         UIManager:show(InfoMessage:new{
             text = _("Flashcard created."),
             timeout = 2,

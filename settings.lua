@@ -595,6 +595,26 @@ function SettingsScreen:openHighlightsSettings()
                 settings_screen:openHighlightsSettings()
             end,
         },
+        { separator = true, label = "Cache" },
+        {
+            label = _("Refresh all highlights"),
+            description = _("Clear cached data and re-read from disk"),
+            value_func = function() return "" end,
+            callback = function()
+                local HL = package.loaded["lib/highlights"]
+                if HL and HL.clearFullCache then
+                    HL.clearFullCache()
+                end
+                local Kobo = package.loaded["lib/kobo"]
+                if Kobo and Kobo.clearCache then
+                    Kobo.clearCache()
+                end
+                UIManager:show(InfoMessage:new{
+                    text = _("Highlight cache cleared."),
+                    timeout = 2,
+                })
+            end,
+        },
         { separator = true, label = "Diagnostics" },
         {
             label = _("Debug highlights"),
