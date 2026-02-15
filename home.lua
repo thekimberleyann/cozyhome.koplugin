@@ -54,6 +54,7 @@ local GestureRange = require("ui/gesturerange")
 
 local DocSettings = require("docsettings")
 local ReadHistory = require("readhistory")
+local lfs = require("libs/libkoreader-lfs")
 local Screen = Device.screen
 local _ = require("gettext")
 local logger = require("logger")
@@ -210,6 +211,12 @@ function CozyHomeScreen:getLastBookInfo()
         if not h.dim then entry = h; break end
     end
     if not entry then return result end
+
+    -- Validate the file actually exists before trusting the path
+    local file_attr = lfs.attributes(entry.file)
+    if not file_attr or file_attr.mode ~= "file" then
+        return result
+    end
 
     result.has_book = true
     result.path = entry.file

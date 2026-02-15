@@ -453,4 +453,34 @@ CozyUI.STATUS = {
     SUSPENDED = "◦",
 }
 
+-- ─── Input sanitization helper ───
+--- Sanitizes user-provided text input: trims whitespace, removes
+-- control characters, and enforces a maximum length.
+-- @param text string|nil: Raw input text
+-- @param max_len number: Maximum allowed length
+-- @param allow_newlines boolean|nil: If true, preserves newlines
+-- @return string: Sanitized text (empty string if input was nil/invalid)
+function CozyUI.sanitizeInput(text, max_len, allow_newlines)
+    if not text or type(text) ~= "string" then return "" end
+
+    -- Trim whitespace
+    text = text:match("^%s*(.-)%s*$") or ""
+
+    -- Remove control characters (except newlines if allowed)
+    if not allow_newlines then
+        text = text:gsub("%c", "")
+    else
+        text = text:gsub("[%c\r]", function(c)
+            return (c == "\n") and c or ""
+        end)
+    end
+
+    -- Enforce length
+    if max_len and #text > max_len then
+        text = text:sub(1, max_len)
+    end
+
+    return text
+end
+
 return CozyUI

@@ -151,20 +151,37 @@ local function scanDir(dir, results, depth, max_depth)
     if not ok then return end
     for file in iter, obj do
         if file ~= "." and file ~= ".." and not file:match("^%.") then
-            local path = dir .. "/" .. file
-            local attr = lfs.attributes(path)
-            if attr then
-                if attr.mode == "directory" and not SKIP_DIRS[file] then
-                    scanDir(path, results, depth + 1, max_depth)
-                elseif attr.mode == "file" and isBookFile(file) then
-                    local sdr = DocSettings:getSidecarDir(path)
-                    local sdr_attr = lfs.attributes(sdr)
-                    if sdr_attr and sdr_attr.mode == "directory" then
-                        table.insert(results, { path = path, filename = file })
+            -- Reject filenames containing path traversal sequences
+            if file:find("..", 1, true) then
+                logger.warn("CozyHome: scanDir: Skipping unsafe filename:", file)
+            else
+                local path = dir .. "/" .. file
+                -- Check for symlinks escaping allowed directories
+                local link_target = lfs.symlinkattributes(path, "mode")
+                if link_target == "link" then
+                    local real_target = lfs.symlinkattributes(path, "target") or path
+                    if not real_target:match("^/mnt/onboard")
+                       and not real_target:match("^%./books")
+                       and not real_target:match("^books") then
+                        logger.warn("CozyHome: scanDir: Skipping symlink escaping allowed dirs:", path)
+                        goto continue
+                    end
+                end
+                local attr = lfs.attributes(path)
+                if attr then
+                    if attr.mode == "directory" and not SKIP_DIRS[file] then
+                        scanDir(path, results, depth + 1, max_depth)
+                    elseif attr.mode == "file" and isBookFile(file) then
+                        local sdr = DocSettings:getSidecarDir(path)
+                        local sdr_attr = lfs.attributes(sdr)
+                        if sdr_attr and sdr_attr.mode == "directory" then
+                            table.insert(results, { path = path, filename = file })
+                        end
                     end
                 end
             end
         end
+        ::continue::
     end
 end
 
@@ -214,6 +231,7 @@ local function findAllBooksWithHighlights()
                     table.insert(books, {
                         path = entry.file, filename = filename,
                         title = title, highlight_count = #hls, source = SRC_KO,
+                        _cached_highlights = hls,
                     })
                 end
             end
@@ -239,6 +257,7 @@ local function findAllBooksWithHighlights()
                 table.insert(books, {
                     path = bk.path, filename = bk.filename,
                     title = title, highlight_count = #hls, source = SRC_KO,
+                    _cached_highlights = hls,
                 })
             end
         end
@@ -781,7 +800,16 @@ function HighlightsHub:loadAll()
     self.kobo_count = 0
 
     for _, bk in ipairs(self.books) do
-        local ko = HL.getHighlights(bk.path) or {}
+        local ko
+        if bk._cached_highlights then
+            if Config.DEBUG.verbose_logging then
+                logger.dbg("CozyHome: Using carried-forward highlights for", bk.path)
+            end
+            ko = bk._cached_highlights
+            bk._cached_highlights = nil  -- free the transient reference
+        else
+            ko = HL.getHighlights(bk.path) or {}
+        end
         for _, hl in ipairs(ko) do
             hl.book_path = bk.path
             hl.book_title = bk.title
@@ -917,11 +945,18 @@ function HighlightsHub:buildUI()
         bordersize = 0, text_font_size = 14, padding = 4, show_parent = self,
     }
 
-    -- Build the toolbar row: Filter, Search, and optionally Batch Flashcards
+    -- Build the toolbar row: Filter, Search, Refresh, and optionally Batch Flashcards
+    local refresh_btn = Button:new{
+        text = _("Refresh"),
+        callback = function() hub:refreshFromDisk() end,
+        bordersize = 0, text_font_size = 14, padding = 4, show_parent = self,
+    }
     local toolbar_children = {
         filter_btn,
         HorizontalSpan:new{ width = 12 },
         search_btn,
+        HorizontalSpan:new{ width = 12 },
+        refresh_btn,
     }
     if bridge_available and HighlightBridge and #self.filtered > 0 then
         local batch_btn = Button:new{
@@ -1334,7 +1369,7 @@ function HighlightsHub:editHighlightNote(hl)
                     local ok, doc_settings = pcall(DocSettings.open, DocSettings, book_path)
                     if ok and doc_settings and doc_settings.data then
                         local annotations = doc_settings.data.annotations
-                        if annotations then
+                        if annotations and type(annotations) == "table" then
                             -- Find the matching annotation by text + page
                             for _, ann in ipairs(annotations) do
                                 if ann.text == hl.text and ann.pageno == hl.pageno then
@@ -1380,7 +1415,7 @@ function HighlightsHub:confirmDeleteHighlight(hl)
             local ok, doc_settings = pcall(DocSettings.open, DocSettings, book_path)
             if ok and doc_settings and doc_settings.data then
                 local annotations = doc_settings.data.annotations
-                if annotations then
+                if annotations and type(annotations) == "table" then
                     -- Find and remove the matching annotation
                     for i, ann in ipairs(annotations) do
                         if ann.text == hl.text and ann.pageno == hl.pageno then
@@ -1404,6 +1439,14 @@ end
 -- ─── Reload highlights from disk and refresh the screen ───
 
 function HighlightsHub:reloadAndRefresh()
+    -- Invalidate the highlight cache before re-reading from disk.
+    -- This ensures edits/deletes are picked up on the next load.
+    if self.all_books then
+        HL.invalidateCache(nil)  -- clear all entries
+    else
+        HL.invalidateCache(self.book_path)  -- clear just this book
+    end
+
     -- Re-read highlights from the sidecar files
     if self.all_books then
         self:loadAll()
@@ -1412,6 +1455,24 @@ function HighlightsHub:reloadAndRefresh()
     end
     self:applyFilters()
     self:refresh()
+end
+
+-- ─── Refresh from disk (clears all caches first) ───
+
+function HighlightsHub:refreshFromDisk()
+    -- Clear both highlight caches so the reload reads everything fresh
+    HL.clearFullCache()
+    if kobo_available and Kobo then
+        Kobo.clearCache()
+    end
+
+    -- reloadAndRefresh re-reads from disk and rebuilds the UI
+    self:reloadAndRefresh()
+
+    UIManager:show(InfoMessage:new{
+        text = _("Highlights refreshed."),
+        timeout = 2,
+    })
 end
 
 -- ─── Filter menu ───
@@ -1520,11 +1581,9 @@ function HighlightsHub:showSearchDialog()
                 text = _("Search"),
                 is_enter_default = true,
                 callback = function()
-                    local q = dlg:getInputText()
+                    local q = CozyUI.sanitizeInput(dlg:getInputText(), 200)
                     UIManager:close(dlg)
-                    -- Limit search query length to prevent performance issues
-                    if q and #q > 200 then q = q:sub(1, 200) end
-                    hub.search = q
+                    hub.search = (q ~= "") and q or nil
                     hub:applyFilters(); hub:refresh()
                 end,
             },

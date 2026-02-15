@@ -3,7 +3,7 @@
 --   ⊹  File:         lib/highlights.lua
 --   ⊹  Author:       Kimberley Gonzalez (thekimberleyann)
 --   ⊹  Date:         2026-01-30
---   ⊹  Modified:     2026-02-08
+--   ⊹  Modified:     2026-02-14
 --   ⊹  Project:      Cozy Home for KOReader
 --
 --   🎀 Description:
@@ -22,12 +22,23 @@
 local DocSettings = require("docsettings")
 local logger = require("logger")
 local lfs = require("libs/libkoreader-lfs")
+local Config = require("config")
 
 -- ============================================
 -- MODULE SETUP
 -- ============================================
 
 local Highlights = {}
+
+-- ============================================
+-- SESSION-LEVEL HIGHLIGHT CACHE
+-- ============================================
+-- Keyed by book_path. Each entry holds the array returned
+-- by readSidecarHighlights(). Cleared on book close,
+-- highlight edit/delete, or manual refresh.
+-- See: highlight_cache_implementation_plan.md
+
+local _highlight_cache = {}
 
 -- ============================================
 -- DEBUG FUNCTIONS
@@ -182,20 +193,26 @@ local function readSidecarHighlights(book_path)
     local ok, doc_settings = pcall(DocSettings.open, DocSettings, book_path)
     
     if not ok or not doc_settings then
-        logger.info("CozyHome: Could not open doc settings for", book_path)
+        if Config.DEBUG.verbose_logging then
+            logger.dbg("CozyHome: Could not open doc settings for", book_path)
+        end
         return {}
     end
     
     local data = doc_settings.data
     if not data then
-        logger.info("CozyHome: No data in doc settings for", book_path)
+        if Config.DEBUG.verbose_logging then
+            logger.dbg("CozyHome: No data in doc settings for", book_path)
+        end
         return {}
     end
     
     local highlights = {}
     
     if data.annotations and #data.annotations > 0 then
-        logger.dbg("CozyHome: Found", #data.annotations, "annotations")
+        if Config.DEBUG.verbose_logging then
+            logger.dbg("CozyHome: Found", #data.annotations, "annotations")
+        end
         for _, annotation in ipairs(data.annotations) do
             if annotation.text and annotation.text ~= "" then
                 table.insert(highlights, {
@@ -215,7 +232,9 @@ local function readSidecarHighlights(book_path)
     end
     
     if data.bookmarks and #data.bookmarks > 0 then
-        logger.dbg("CozyHome: Found", #data.bookmarks, "bookmarks (legacy)")
+        if Config.DEBUG.verbose_logging then
+            logger.dbg("CozyHome: Found", #data.bookmarks, "bookmarks (legacy)")
+        end
         for _, bookmark in ipairs(data.bookmarks) do
             if bookmark.notes or bookmark.text then
                 local highlight_text = bookmark.notes or ""
@@ -238,7 +257,9 @@ local function readSidecarHighlights(book_path)
         return highlights
     end
     
-    logger.info("CozyHome: No annotations or bookmarks found in", book_path)
+    if Config.DEBUG.verbose_logging then
+        logger.dbg("CozyHome: No annotations or bookmarks found in", book_path)
+    end
     return highlights
 end
 
@@ -246,15 +267,29 @@ end
 -- PUBLIC FUNCTIONS
 -- ============================================
 
---- Gets all highlights from a book
+--- Gets all highlights from a book (cached per session)
 -- @param book_path string: Full path to the book file
 -- @return table: Array of highlight objects
 function Highlights.getHighlights(book_path)
     if not book_path then
         return {}
     end
-    
-    return readSidecarHighlights(book_path)
+
+    -- Check cache first
+    if _highlight_cache[book_path] then
+        if Config.DEBUG.verbose_logging then
+            logger.dbg("CozyHome: Cache hit for", book_path)
+        end
+        return _highlight_cache[book_path]
+    end
+
+    -- Cache miss — read from disk and store
+    local highlights = readSidecarHighlights(book_path)
+    _highlight_cache[book_path] = highlights
+    if Config.DEBUG.verbose_logging then
+        logger.dbg("CozyHome: Cached highlights for", book_path, "(", #highlights, "items)")
+    end
+    return highlights
 end
 
 Highlights.getBookHighlights = Highlights.getHighlights
@@ -333,6 +368,40 @@ function Highlights.searchHighlights(book_path, query)
     end
     
     return results
+end
+
+-- ============================================
+-- CACHE MANAGEMENT
+-- ============================================
+
+--- Invalidates cached highlights for a specific book, or all books
+-- @param book_path string|nil: Path to invalidate, or nil to clear all
+function Highlights.invalidateCache(book_path)
+    if book_path then
+        if _highlight_cache[book_path] then
+            logger.dbg("CozyHome: Invalidated cache for", book_path)
+        end
+        _highlight_cache[book_path] = nil
+    else
+        logger.dbg("CozyHome: Invalidated entire highlight cache")
+        _highlight_cache = {}
+    end
+end
+
+--- Clears the full highlight cache (used by manual refresh)
+-- Alias for invalidateCache(nil) with explicit intent
+function Highlights.clearFullCache()
+    local count = 0
+    for _ in pairs(_highlight_cache) do count = count + 1 end
+    logger.dbg("CozyHome: Clearing full highlight cache (", count, "entries)")
+    _highlight_cache = {}
+end
+
+--- Returns whether a book's highlights are currently cached
+-- @param book_path string: Full path to the book file
+-- @return boolean
+function Highlights.isCached(book_path)
+    return _highlight_cache[book_path] ~= nil
 end
 
 return Highlights

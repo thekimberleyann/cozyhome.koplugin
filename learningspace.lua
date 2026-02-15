@@ -121,7 +121,15 @@ end
 -- @return table: { total, due_today, new, learning, review }
 function FlashcardBridge.getCountsForBooks(book_paths)
     local counts = { total = 0, due_today = 0, new = 0, learning = 0, review = 0 }
-    if not book_paths or #book_paths == 0 then return counts end
+    if not book_paths or type(book_paths) ~= "table" or #book_paths == 0 then return counts end
+
+    -- Validate all paths are non-empty strings before touching the DB
+    for i, path in ipairs(book_paths) do
+        if type(path) ~= "string" or path == "" then
+            logger.warn("CozyHome: FlashcardBridge: Invalid path at index", i)
+            return counts  -- Fail safe
+        end
+    end
 
     local conn = FlashcardBridge.openDB()
     if not conn then return counts end
@@ -185,7 +193,15 @@ end
 --- Get all flashcard IDs for a set of book paths (for category linking).
 function FlashcardBridge.getCardIdsForBooks(book_paths)
     local ids = {}
-    if not book_paths or #book_paths == 0 then return ids end
+    if not book_paths or type(book_paths) ~= "table" or #book_paths == 0 then return ids end
+
+    -- Validate all paths are non-empty strings
+    for i, path in ipairs(book_paths) do
+        if type(path) ~= "string" or path == "" then
+            logger.warn("CozyHome: FlashcardBridge.getCardIdsForBooks: Invalid path at index", i)
+            return ids
+        end
+    end
 
     local conn = FlashcardBridge.openDB()
     if not conn then return ids end
@@ -711,9 +727,10 @@ function ClassListScreen:showCreateClassDialog()
                     text = _("Create"),
                     is_enter_default = true,
                     callback = function()
-                        local name = dialog:getInputText()
+                        local raw_name = dialog:getInputText()
                         UIManager:close(dialog)
-                        if name and name ~= "" then
+                        local name = CozyUI.sanitizeInput(raw_name, 100)
+                        if name ~= "" then
                             local icon = name:sub(1, 1):upper()
                             local class_id = Database:createClass(name, icon, nil)
                             if class_id then
@@ -799,9 +816,10 @@ function ClassListScreen:showRenameClassDialog(class_id, old_name)
                     text = _("Rename"),
                     is_enter_default = true,
                     callback = function()
-                        local new_name = dialog:getInputText()
+                        local raw_name = dialog:getInputText()
                         UIManager:close(dialog)
-                        if new_name and new_name ~= "" then
+                        local new_name = CozyUI.sanitizeInput(raw_name, 100)
+                        if new_name ~= "" then
                             Database:renameClass(class_id, new_name)
                             list_screen:refresh()
                         end

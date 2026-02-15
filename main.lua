@@ -421,6 +421,17 @@ end
 -- ============================================
 
 function CozyHome:onCloseDocument()
+    -- Phase 3: Invalidate highlight cache for the closed book
+    -- so new highlights made during reading appear immediately
+    -- on return to Cozy Home. Uses package.loaded to avoid
+    -- force-loading lib/highlights just to clear an empty cache.
+    local filepath = self.ui and self.ui.document and self.ui.document.file
+    if filepath then
+        local HL = package.loaded["lib/highlights"]
+        if HL and HL.invalidateCache then
+            HL.invalidateCache(filepath)
+        end
+    end
     logger.dbg("CozyHome: Document closed")
 end
 
