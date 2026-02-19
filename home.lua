@@ -159,9 +159,8 @@ function CozyHomeScreen:init()
 end
 
 function CozyHomeScreen:checkFirstRun()
-    local first_run_done = Database:getPref("first_run_complete", nil)
-    if first_run_done then return end
-    Database:setPref("first_run_complete", "true")
+    if G_reader_settings:isTrue("cozyhome_first_run_complete") then return end
+    G_reader_settings:saveSetting("cozyhome_first_run_complete", true)
     UIManager:nextTick(function()
         UIManager:show(InfoMessage:new{
             text = _("☕ Welcome to Cozy Home!\n\n"
