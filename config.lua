@@ -56,13 +56,6 @@ Config.TILES = {
         description = "Browse your book highlights",
     },
     {
-        key = "notebooks",
-        label = "Notebooks",
-        icon_text = "//_",
-        enabled = true,
-        description = "Create and manage stylus notebooks",
-    },
-    {
         key = "learnspace",
         label = "Learn Space",
         icon_text = "{+}",
@@ -141,6 +134,35 @@ Config.UI = {
     header_font_size = 20,
     header_btn_font_size = 14,
     header_padding = 15,
+
+    -- ─── Display constants (base values, scaled by Screen:scaleBySize at runtime) ───
+
+    -- Highlights browser
+    row_height_highlight_list = 72,
+    reserved_height_highlight_list = 230,
+    max_preview_text = 120,
+    max_title_text = 30,
+    max_note_text = 60,
+
+    -- Learning Space: class list
+    row_height_class_list = 60,
+    reserved_height_class_list = 180,
+
+    -- Learning Space: class detail — books tab
+    row_height_class_detail = 52,
+    reserved_height_class_detail = 280,
+
+    -- Learning Space: class detail — notecards tab
+    row_height_class_notecards = 56,
+    reserved_height_class_notecards = 280,
+
+    -- Learning Space: class detail — highlights tab
+    row_height_class_highlights = 60,
+    reserved_height_class_highlights = 280,
+
+    -- Learning Space: book picker
+    row_height_book_picker = 48,
+    reserved_height_book_picker = 200,
 }
 
 -- ============================================

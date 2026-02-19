@@ -97,9 +97,9 @@ local sp         = CozyUI.sp
 -- ─── Constants ───
 
 local ITEMS_PER_PAGE = nil  -- calculated dynamically in buildUI
-local MAX_TEXT_LEN   = 120
-local MAX_TITLE_LEN  = 30
-local MAX_NOTE_LEN   = 60
+local MAX_TEXT_LEN   = Config.UI.max_preview_text
+local MAX_TITLE_LEN  = Config.UI.max_title_text
+local MAX_NOTE_LEN   = Config.UI.max_note_text
 
 local SRC_KO   = "koreader"
 local SRC_KOBO = "kobo"
@@ -143,6 +143,9 @@ local function isBookFile(name)
     return false
 end
 
+-- NOTE: scanDir and its helpers (isBookFile, BOOK_EXTS, SKIP_DIRS, getScanPaths)
+-- are retained as dead code for now. They were used by findAllBooksWithHighlights()
+-- but removed for performance (Issue 1). ReadHistory covers all KOReader-read books.
 local function scanDir(dir, results, depth, max_depth)
     depth = depth or 0
     max_depth = max_depth or 6
@@ -238,30 +241,9 @@ local function findAllBooksWithHighlights()
         end
     end)
 
-    local found = {}
-    local scanned = {}
-    for _, sp_path in ipairs(getScanPaths()) do
-        if sp_path and not scanned[sp_path] then
-            scanned[sp_path] = true
-            scanDir(sp_path, found)
-        end
-    end
-
-    for _, bk in ipairs(found) do
-        if not seen[bk.path] then
-            seen[bk.path] = true
-            local hls = HL.getHighlights(bk.path) or {}
-            if #hls > 0 then
-                local title = bk.filename:match("^(.+)%.[^%.]+$") or bk.filename
-                title = title:gsub("%.kepub$", "")
-                table.insert(books, {
-                    path = bk.path, filename = bk.filename,
-                    title = title, highlight_count = #hls, source = SRC_KO,
-                    _cached_highlights = hls,
-                })
-            end
-        end
-    end
+    -- NOTE: Filesystem scanDir removed for performance (Issue 1).
+    -- ReadHistory already covers all books the user has opened in KOReader.
+    -- Books not in ReadHistory cannot have KOReader highlights.
 
     if kobo_available and Kobo then
         local kobo_books = Kobo.getAllBooksWithHighlights() or {}
@@ -1014,13 +996,13 @@ function HighlightsHub:buildUI()
     end
 
     -- ── HIGHLIGHT ROWS ──
-    local row_h = Screen:scaleBySize(72)
+    local row_h = Screen:scaleBySize(Config.UI.row_height_highlight_list)
 
     -- Dynamically calculate how many rows fit on screen.
     -- Reserve space for: header (~50), summary (~16), filter bar (~40),
     -- dividers (~10), pagination (~44), footer (~30),
-    -- plus padding (~40). Total reserved ≈ 230px.
-    local reserved_h = Screen:scaleBySize(230)
+    -- plus padding (~40).
+    local reserved_h = Screen:scaleBySize(Config.UI.reserved_height_highlight_list)
     local available_h = sh - reserved_h
     local items_per_page = math.max(3, math.floor(available_h / (row_h + 1)))  -- +1 for separator
 

@@ -70,9 +70,6 @@ local CATEGORIES = {
     { key = "advanced",    label = "Advanced",       icon_text = "✦", description = "Debug, about, reset" },
 }
 
--- TODO: Re-add Notebooks settings when pen/stylus input is fixed
--- { key = "notebooks",  label = "Notebooks",  icon_text = "N", description = "Default template, auto-save" },
-
 local PREF = {
     show_stats_bar       = "home_show_stats_bar",
     cards_per_session    = "cards_per_session",
@@ -96,10 +93,6 @@ local PREF = {
     focus_sessions_before_long = "focus_sessions_before_long",
     focus_sound_enabled  = "focus_sound_enabled",
 }
-
--- TODO: Notebook pref keys preserved for when pen is fixed
--- notebook_template    = "notebook_default_template",
--- notebook_autosave    = "notebook_autosave_seconds",
 
 -- ─── Settings Hub Screen ───
 
@@ -953,16 +946,13 @@ function SettingsScreen:openAdvancedSettings()
                         .. "\n\n" .. Config.PLUGIN.description
                         .. "\n\nDesigned for Kobo e-ink devices."
                         .. "\n\nModules: Home, Highlights,"
-                        .. "\nLearning Spaces, Notecards, Focus, Settings",
+                        .. "\nLearn Spaces, Notecards, Focus, Settings",
                 })
             end,
         },
     }
     self:showSubScreen(_("Advanced"), rows)
 end
-
--- TODO: Re-add Notebook settings when pen/stylus input is fixed
--- function SettingsScreen:openNotebookSettings() ... end
 
 -- ─── Public API ───
 

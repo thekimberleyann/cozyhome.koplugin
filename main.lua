@@ -45,9 +45,9 @@ local logger = require("logger")
 
 local shared_keys = {
     "config", "lib/database", "home", "statusbar", "history",
-    "notebooks", "learningspace", "notecards",
+    "learningspace", "notecards",
     "settings", "highlight_bridge", "lib/bookscanner",
-    "lib/templates", "lib/highlights",
+    "lib/highlights",
     "lib/kobo", "lib/anki_export", "lib/anki_import",
     "highlights", "focusmode", "lib/cozyui", "cozyui",
 }
@@ -432,6 +432,14 @@ function CozyHome:onCloseDocument()
             HL.invalidateCache(filepath)
         end
     end
+
+    -- Mark the home screen stats cache as dirty so the next
+    -- Cozy Home open recomputes (user may have added highlights)
+    local Home = package.loaded["home"]
+    if Home and Home.invalidateStatsCache then
+        Home.invalidateStatsCache()
+    end
+
     logger.dbg("CozyHome: Document closed")
 end
 
