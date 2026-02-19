@@ -5,10 +5,10 @@ browser. Big tappable tiles, minimal clutter, and quick access to your books,
 highlights, flashcards, and study tools.
 
 **Author:** Kimberley Gonzalez ([@thekimberleyann](https://github.com/thekimberleyann))  
-**Version:** 0.12.1  
+**Version:** 0.12.2  
 **License:** MIT  
 **Devices Tested on:** Kobo Clara 2E (grayscale), Kobo Libra Colour  
-**Updated:** February 11, 2026
+**Updated:** February 18, 2026
 
 ---
 
@@ -98,7 +98,6 @@ cozyhome.koplugin/
 ├── learningspace.lua     Learning spaces / topic organization
 ├── notecards.lua         Notecards hub (stacks, cards, built-in review)
 ├── focusmode.lua         Pomodoro focus timer
-├── notebooks.lua         Notebooks (stylus support — in progress)
 ├── settings.lua          Settings hub screen
 ├── statusbar.lua         Top status bar widget
 ├── cozyui.lua            Design system helpers (compat copy)
@@ -110,8 +109,7 @@ cozyhome.koplugin/
 │   ├── highlights.lua    KOReader sidecar file reader
 │   ├── kobo.lua          Kobo native SQLite database reader
 │   ├── anki_export.lua   Export flashcards to .apkg format
-│   ├── anki_import.lua   Import flashcards from .apkg files
-│   └── templates.lua     Notebook page templates
+│   └── anki_import.lua   Import flashcards from .apkg files
 └── data/                 SQLite databases (created at runtime)
 ```
 
@@ -123,7 +121,7 @@ Cozy Home uses two SQLite databases:
 
 | Database | Purpose |
 |----------|---------|
-| `cozyhome.db` | Learning spaces, notebooks, focus mode data, preferences |
+| `cozyhome.db` | Learning spaces, focus mode data, preferences |
 | `cozy_flashcards.db` | Flashcards, decks, review history, daily stats |
 
 The flashcard database is shared with Cozy Flashcards if both plugins are
