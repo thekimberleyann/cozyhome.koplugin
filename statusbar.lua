@@ -17,15 +17,12 @@
 --
 -- + ⊹ 🎀 ⋆ 🌙 ⋆ ☆ ⋆ ☀️ ⋆ 🎀 ⊹ +
 
-local Blitbuffer = require("ffi/blitbuffer")
 local Device = require("device")
 local Font = require("ui/font")
 local Geom = require("ui/geometry")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
 local FrameContainer = require("ui/widget/container/framecontainer")
-local LeftContainer = require("ui/widget/container/leftcontainer")
-local RightContainer = require("ui/widget/container/rightcontainer")
 local TextWidget = require("ui/widget/textwidget")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local PowerD = Device:getPowerDevice()

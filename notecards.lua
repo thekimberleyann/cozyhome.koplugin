@@ -45,21 +45,17 @@ local InputContainer = require("ui/widget/container/inputcontainer")
 local InputDialog = require("ui/widget/inputdialog")
 local LeftContainer = require("ui/widget/container/leftcontainer")
 local LineWidget = require("ui/widget/linewidget")
-local RightContainer = require("ui/widget/container/rightcontainer")
 local ScrollableContainer = require("ui/widget/container/scrollablecontainer")
-local Size = require("ui/size")
 local TextWidget = require("ui/widget/textwidget")
 local TextBoxWidget = require("ui/widget/textboxwidget")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
-local logger = require("logger")
 local _ = require("gettext")
 local Screen = Device.screen
 
 local Config = require("config")
 local CozyUI = require("lib/cozyui")
-local Database = require("lib/database")
 
 -- ============================================
 -- CONSTANTS
@@ -879,7 +875,7 @@ local function buildReviewHeader(sw, content_w, title_text, close_callback, stat
         padding = 10, padding_h = 14,
         text_font_face = "cfont", text_font_size = 18,
     }
-    local left_widget = nil
+    local left_widget
     if stats_callback then
         left_widget = HorizontalGroup:new{
             Button:new{
@@ -1550,10 +1546,9 @@ function NotecardsHub:buildStacksTab(items, sw, sh, content_w, pad)
             },
         })
     else
-        local tile_h = Screen:scaleBySize(80)
         local progress_bar_w = math.floor(content_w * 0.45)
 
-        for i, deck in ipairs(decks) do
+        for _, deck in ipairs(decks) do
             local deck_id = deck.id
             local is_selected = self.selected_decks[deck_id] == true
 
@@ -1594,7 +1589,6 @@ function NotecardsHub:buildStacksTab(items, sw, sh, content_w, pad)
             local name_gap = 8
             local name_max_w = math.max(0, content_w - due_actual_w - name_gap)
             name_w.max_width = name_max_w
-            local top_row_h = math.max(name_w:getSize().h, due_w:getSize().h) + 2
             local name_spacer = math.max(0, content_w - name_w:getSize().w - due_actual_w - name_gap)
             local top_row = HorizontalGroup:new{
                 align = "center",
@@ -1826,7 +1820,6 @@ function NotecardsHub:buildAllCardsTab(items, sw, sh, content_w, pad)
     local hub = self
 
     -- Filter bar: Book filter + Deck filter
-    local filter_parts = {}
 
     -- Deck filter label
     local deck_label = self.deck_filter_name or _("All Decks")
@@ -2934,7 +2927,6 @@ function NotecardsHub:showExportMenu()
 end
 
 function NotecardsHub:doExportAll()
-    local hub = self
     local AnkiExport = require("lib/anki_export")
 
     UIManager:show(InfoMessage:new{ text = _("Exporting all cards..."), timeout = 1 })
@@ -3140,7 +3132,7 @@ function NotecardsHub:doImport(apkg_path)
     UIManager:show(InfoMessage:new{ text = _("Importing..."), timeout = 1 })
 
     UIManager:nextTick(function()
-        local ok, message, count = AnkiImport.importFromApkg(apkg_path)
+        local ok, message = AnkiImport.importFromApkg(apkg_path)
         if ok then
             UIManager:show(InfoMessage:new{
                 text = message,

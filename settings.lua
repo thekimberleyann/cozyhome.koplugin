@@ -20,8 +20,6 @@
 --
 -- + ⊹ 🎀 ⋆ 🌙 ⋆ ☆ ⋆ ☀️ ⋆ 🎀 ⊹ +
 
-local Blitbuffer = require("ffi/blitbuffer")
-local Button = require("ui/widget/button")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local ConfirmBox = require("ui/widget/confirmbox")
 local Device = require("device")
@@ -40,9 +38,7 @@ local RightContainer = require("ui/widget/container/rightcontainer")
 local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
-local VerticalSpan = require("ui/widget/verticalspan")
 local ScrollableContainer = require("ui/widget/container/scrollablecontainer")
-local logger = require("logger")
 local _ = require("gettext")
 local Screen = Device.screen
 

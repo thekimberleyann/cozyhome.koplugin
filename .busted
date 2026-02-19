@@ -1,0 +1,8 @@
+-- .busted — Busted test runner config for Cozy Home
+return {
+    default = {
+        verbose = true,
+        pattern = "_spec",
+        ROOT = {"spec/"},
+    },
+}

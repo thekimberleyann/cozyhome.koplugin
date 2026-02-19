@@ -45,9 +45,7 @@ local InputDialog = require("ui/widget/inputdialog")
 local LeftContainer = require("ui/widget/container/leftcontainer")
 local LineWidget = require("ui/widget/linewidget")
 local RightContainer = require("ui/widget/container/rightcontainer")
-local Size = require("ui/size")
 local TextWidget = require("ui/widget/textwidget")
-local TextBoxWidget = require("ui/widget/textboxwidget")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
@@ -71,6 +69,7 @@ local BookScanner = require("lib/bookscanner")
 -- ICON CHOICES for classes
 -- ============================================
 
+-- luacheck: ignore 211 (CLASS_ICONS reserved for future icon picker)
 local CLASS_ICONS = { "A", "B", "C", "D", "E", "F", "G", "H",
                       "L", "M", "N", "P", "R", "S", "T", "W",
                       "*", "+", "#", "?" }
@@ -87,6 +86,7 @@ LearningSpace._detail_instance = nil
 -- OPTIONAL PLUGIN INTEGRATION
 -- ============================================
 
+-- luacheck: ignore 211 (tryRequirePlugin reserved for future plugin integration)
 local function tryRequirePlugin(plugin_path)
     local ok, module = pcall(require, plugin_path)
     if ok then return module end

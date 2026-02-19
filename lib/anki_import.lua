@@ -354,10 +354,8 @@ end
 
 --- Imports cards from an Anki .apkg file into cozy_flashcards.db.
 -- @param apkg_path string: Path to the .apkg file
--- @param options table: {tag_prefix}
 -- @return boolean, string, number: success, message, imported_count
-function AnkiImport.importFromApkg(apkg_path, options)
-    options = options or {}
+function AnkiImport.importFromApkg(apkg_path)
 
     if not apkg_path or not fileExists(apkg_path) then
         return false, "File not found: " .. tostring(apkg_path), 0
