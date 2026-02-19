@@ -22,7 +22,6 @@
 
 local DocSettings = require("docsettings")
 local DocumentRegistry = require("document/documentregistry")
-local Device = require("device")
 local ReadHistory = require("readhistory")
 local lfs = require("libs/libkoreader-lfs")
 local logger = require("logger")
@@ -327,7 +326,7 @@ function BookScanner.enrichMetadata(books, batch_size)
     -- Build a lookup from ReadHistory for last-read timestamps.
     -- This lets "recent" sort use actual reading order, not just file mtime.
     local history_order = {}
-    local hist_ok = pcall(function()
+    pcall(function()
         local hist = ReadHistory.hist
         if hist then
             for i, entry in ipairs(hist) do

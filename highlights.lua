@@ -29,7 +29,6 @@
 --
 -- Version: 0.12.0
 
-local Blitbuffer = require("ffi/blitbuffer")
 local UIManager = require("ui/uimanager")
 local InfoMessage = require("ui/widget/infomessage")
 local ButtonDialog = require("ui/widget/buttondialog")
@@ -52,7 +51,6 @@ local InputContainer = require("ui/widget/container/inputcontainer")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local LeftContainer = require("ui/widget/container/leftcontainer")
-local RightContainer = require("ui/widget/container/rightcontainer")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
@@ -96,10 +94,6 @@ local sp         = CozyUI.sp
 
 -- ─── Constants ───
 
-local ITEMS_PER_PAGE = nil  -- calculated dynamically in buildUI
-local MAX_TEXT_LEN   = Config.UI.max_preview_text
-local MAX_TITLE_LEN  = Config.UI.max_title_text
-local MAX_NOTE_LEN   = Config.UI.max_note_text
 
 local SRC_KO   = "koreader"
 local SRC_KOBO = "kobo"

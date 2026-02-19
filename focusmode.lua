@@ -21,7 +21,6 @@
 --
 -- + ⊹ 🎀 ⋆ 🌙 ⋆ ☆ ⋆ ☀️ ⋆ 🎀 ⊹ +
 
-local Blitbuffer = require("ffi/blitbuffer")
 local Device = require("device")
 local Font = require("ui/font")
 local Geom = require("ui/geometry")
@@ -37,24 +36,19 @@ local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
 local InfoMessage = require("ui/widget/infomessage")
 local InputContainer = require("ui/widget/container/inputcontainer")
-local LeftContainer = require("ui/widget/container/leftcontainer")
 local ScrollableContainer = require("ui/widget/container/scrollablecontainer")
 local SpinWidget = require("ui/widget/spinwidget")
 local TextWidget = require("ui/widget/textwidget")
-local TextBoxWidget = require("ui/widget/textboxwidget")
 local VerticalGroup = require("ui/widget/verticalgroup")
-local VerticalSpan = require("ui/widget/verticalspan")
 
 local _ = require("gettext")
 local T = require("ffi/util").template
-local logger = require("logger")
 
 local Config = require("config")
 local CozyUI = require("lib/cozyui")
 local Database = require("lib/database")
 
 local BLACK      = CozyUI.BLACK
-local DARK_GRAY  = CozyUI.DARK_GRAY
 local GRAY       = CozyUI.GRAY
 local LIGHT_GRAY = CozyUI.LIGHT_GRAY
 local WHITE      = CozyUI.WHITE

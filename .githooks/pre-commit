@@ -1,0 +1,44 @@
+#!/bin/bash
+# ₊ ⊹ 🎀 Cozy Home pre-commit hook 🎀 ⊹ ₊
+# Runs luacheck + busted before allowing commits.
+#
+# Setup (one-time):
+#   git config core.hooksPath .githooks
+#   chmod +x .githooks/pre-commit
+#
+# Bypass (WIP commits):
+#   git commit --no-verify -m "WIP"
+
+set -e
+
+echo "🎀 Cozy Home pre-commit checks..."
+
+# ── Step 1: Luacheck on staged Lua files ──
+STAGED_LUA=$(git diff --cached --name-only --diff-filter=ACM | grep '\.lua$' || true)
+
+if [ -n "$STAGED_LUA" ]; then
+    echo "  ▸ Running luacheck on staged files..."
+    if echo "$STAGED_LUA" | xargs luacheck --no-color; then
+        echo "  ✔ Luacheck passed"
+    else
+        echo "  ✗ Luacheck failed. Fix warnings before committing."
+        exit 1
+    fi
+else
+    echo "  ▸ No Lua files staged, skipping luacheck"
+fi
+
+# ── Step 2: Run tests ──
+if [ -d "spec" ] && ls spec/*_spec.lua 1>/dev/null 2>&1; then
+    echo "  ▸ Running busted tests..."
+    if busted --no-color spec/; then
+        echo "  ✔ Tests passed"
+    else
+        echo "  ✗ Tests failed. Fix before committing."
+        exit 1
+    fi
+else
+    echo "  ▸ No spec files found, skipping tests"
+fi
+
+echo "🎀 All checks passed!"

@@ -30,7 +30,6 @@
 -- IMPORTS — only what's needed to render the home screen
 -- ============================================
 
-local Blitbuffer = require("ffi/blitbuffer")
 local Device = require("device")
 local Font = require("ui/font")
 local Geom = require("ui/geometry")
@@ -47,7 +46,6 @@ local LeftContainer = require("ui/widget/container/leftcontainer")
 local RightContainer = require("ui/widget/container/rightcontainer")
 local TextWidget = require("ui/widget/textwidget")
 local VerticalGroup = require("ui/widget/verticalgroup")
-local VerticalSpan = require("ui/widget/verticalspan")
 local ScrollableContainer = require("ui/widget/container/scrollablecontainer")
 local InfoMessage = require("ui/widget/infomessage")
 local GestureRange = require("ui/gesturerange")
@@ -71,7 +69,6 @@ local Database = require("lib/database")
 local BLACK      = CozyUI.BLACK
 local DARK_GRAY  = CozyUI.DARK_GRAY
 local GRAY       = CozyUI.GRAY
-local LIGHT_GRAY = CozyUI.LIGHT_GRAY
 local WHITE      = CozyUI.WHITE
 local sp         = CozyUI.sp
 

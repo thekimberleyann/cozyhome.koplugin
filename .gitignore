@@ -32,3 +32,8 @@ settings.reader.lua
 
 # ── Debug / test logs ──
 *.log
+
+# ── Luacheck / Luacov artifacts ──
+.luacheckcache
+luacov.stats.out
+luacov.report.out

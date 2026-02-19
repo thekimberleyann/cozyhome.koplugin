@@ -30,7 +30,6 @@
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local UIManager = require("ui/uimanager")
 local InfoMessage = require("ui/widget/infomessage")
-local Device = require("device")
 local Dispatcher = require("dispatcher")
 local _ = require("gettext")
 local logger = require("logger")

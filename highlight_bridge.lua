@@ -48,7 +48,6 @@ function HighlightBridge.createCardFromHighlight(highlight_data)
     end
 
     -- Check if flashcard DB is accessible
-    local SQ3 = require("lua-ljsqlite3/init")
     local lfs = require("libs/libkoreader-lfs")
     local db_path = DataStorage:getSettingsDir() .. "/cozy_flashcards.db"
     local attr = lfs.attributes(db_path)
