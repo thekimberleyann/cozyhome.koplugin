@@ -12,7 +12,7 @@
 --       Styled to Cozy Design System.
 --
 --   🎀 Optimization note (2026-02-11):
---       Screen modules (History, Library, Notebooks, etc.)
+--       Screen modules (History, Library, etc.)
 --       are now lazy-loaded — they are only require()'d
 --       when the user taps the corresponding tile. This
 --       means opening Cozy Home only loads the dashboard
@@ -125,6 +125,11 @@ local CozyHomeScreen = InputContainer:extend{
 local Home = {}
 Home._current_instance = nil
 
+-- Module-level stats cache (persists across instance re-creation)
+-- Cleared when onCloseDocument fires (user may have added highlights)
+local _cached_stats_text = nil
+local _stats_cache_dirty = true  -- true = needs recompute
+
 function CozyHomeScreen:init()
     self.dimen = Geom:new{
         x = 0, y = 0,
@@ -139,19 +144,21 @@ function CozyHomeScreen:init()
 
     Database:open()
     self._cached_book_info = self:getLastBookInfo()
-    -- Stats text starts as a placeholder — we compute it after the screen draws
-    self._cached_stats_text = _("Loading…")
+    self._closed = false
+    -- Use module-level cache if available, otherwise placeholder
+    self._cached_stats_text = _cached_stats_text or _("Loading…")
     Home._current_instance = self
     self:checkFirstRun()
     self:buildUI()
 
-    -- Defer the expensive stats computation so the home screen appears FAST
-    -- then we update the stats text after it's visible
-    UIManager:nextTick(function()
-        if Home._current_instance == self then
-            self:computeStatsDeferred()
-        end
-    end)
+    -- Only recompute stats if the cache is dirty (first run or after book close)
+    if _stats_cache_dirty then
+        UIManager:nextTick(function()
+            if Home._current_instance == self and not self._closed then
+                self:computeStatsDeferred()
+            end
+        end)
+    end
 end
 
 function CozyHomeScreen:checkFirstRun()
@@ -163,7 +170,7 @@ function CozyHomeScreen:checkFirstRun()
             text = _("☕ Welcome to Cozy Home!\n\n"
                 .. "Your customizable KOReader dashboard.\n\n"
                 .. "· Books — open KOReader file browser\n"
-                .. "· Notebooks — stylus drawing\n"
+                .. "· Highlights — browse your highlights\n"
                 .. "· Learn Space — group by subject\n"
                 .. "· Notecards — flashcard review\n"
                 .. "· Settings — customize everything\n\n"
@@ -181,6 +188,7 @@ function CozyHomeScreen:onShow()
 end
 
 function CozyHomeScreen:onCloseWidget()
+    self._closed = true
     if self._cover_bb and self._cover_bb.free then
         self._cover_bb:free()
         self._cover_bb = nil
@@ -300,13 +308,6 @@ function CozyHomeScreen:getVisibleTiles()
     for _, tile in ipairs(Config.TILES) do
         local pref_val = Database:getPref("tile_visible_" .. tile.key, "true")
         local is_visible = (pref_val ~= "false")
-        if tile.key == "notebooks" and is_visible then
-            local has_stylus = Device.hasStylus and Device:hasStylus()
-            if not has_stylus then
-                local override = Database:getPref("notebooks_force_show", "false")
-                if override ~= "true" then is_visible = false end
-            end
-        end
         if is_visible then table.insert(visible, tile) end
     end
     return visible
@@ -649,7 +650,6 @@ function CozyHomeScreen:getTileCallbacks()
             end)
         end,
         highlights = nav("highlights"),
-        notebooks  = nav("notebooks"),
         learnspace = nav("learningspace"),
         notecards  = nav("notecards"),
         focus      = nav("focusmode"),
@@ -664,6 +664,8 @@ end
 -- this is the expensive part that used to block rendering.
 
 function CozyHomeScreen:computeStatsDeferred()
+    if self._closed then return end
+
     local parts = {}
 
     -- Count books in progress (cap at 10 to limit disk reads)
@@ -672,6 +674,7 @@ function CozyHomeScreen:computeStatsDeferred()
     local hist = ReadHistory.hist or {}
     local counted = 0
     for _, entry in ipairs(hist) do
+        if self._closed then return end  -- early-out if screen closed
         if not entry.dim and counted < 10 then
             counted = counted + 1
             local ok, ds = pcall(DocSettings.open, DocSettings, entry.file)
@@ -736,8 +739,12 @@ function CozyHomeScreen:computeStatsDeferred()
         stats_text = table.concat(parts, "  ·  ")
     end
 
+    -- Save to module-level cache so re-init doesn't recompute
+    _cached_stats_text = stats_text
+    _stats_cache_dirty = false
+
     -- Update the stats widget text in-place and trigger a partial refresh
-    if self._stats_widget then
+    if not self._closed and self._stats_widget then
         self._stats_widget:setText(stats_text)
         UIManager:setDirty(self, function()
             return "ui", self._stats_widget.dimen
@@ -774,6 +781,12 @@ function Home.show(ui, on_close_callback)
 end
 
 function Home.isOpen() return Home._current_instance ~= nil end
+
+--- Marks the stats cache as dirty so the next init recomputes.
+-- Called by main.lua onCloseDocument.
+function Home.invalidateStatsCache()
+    _stats_cache_dirty = true
+end
 
 function Home.close()
     if Home._current_instance then

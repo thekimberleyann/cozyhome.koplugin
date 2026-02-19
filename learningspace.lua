@@ -474,8 +474,8 @@ function ClassListScreen:buildUI()
         })
     else
         -- Paginate
-        local row_h = Screen:scaleBySize(60)
-        local reserved_h = Screen:scaleBySize(180)  -- header + separator + new button + pagination
+        local row_h = Screen:scaleBySize(Config.UI.row_height_class_list)
+        local reserved_h = Screen:scaleBySize(Config.UI.reserved_height_class_list)  -- header + separator + new button + pagination
         local available_h = screen_h - reserved_h
         local items_per_page = math.max(3, math.floor(available_h / (row_h + 1)))
 
@@ -820,8 +820,15 @@ function ClassListScreen:showRenameClassDialog(class_id, old_name)
                         UIManager:close(dialog)
                         local new_name = CozyUI.sanitizeInput(raw_name, 100)
                         if new_name ~= "" then
-                            Database:renameClass(class_id, new_name)
-                            list_screen:refresh()
+                            local ok = Database:renameClass(class_id, new_name)
+                            if ok then
+                                list_screen:refresh()
+                            else
+                                UIManager:show(InfoMessage:new{
+                                    text = _("Failed to rename learning space."),
+                                    timeout = 3,
+                                })
+                            end
                         end
                     end,
                 },
@@ -838,8 +845,15 @@ function ClassListScreen:confirmDeleteClass(class_id, class_name)
         text = _("Delete learning space '") .. class_name .. _("'?\n\nThis will remove the class and all its book associations. Your books will not be deleted."),
         ok_text = _("Delete"),
         ok_callback = function()
-            Database:deleteClass(class_id)
-            list_screen:refresh()
+            local ok = Database:deleteClass(class_id)
+            if ok then
+                list_screen:refresh()
+            else
+                UIManager:show(InfoMessage:new{
+                    text = _("Failed to delete learning space."),
+                    timeout = 3,
+                })
+            end
         end,
     })
 end
@@ -1251,8 +1265,8 @@ function ClassDetailScreen:buildBooksTab(items, screen_w, screen_h, content_w, p
     end
 
     -- Paginate
-    local row_h = Screen:scaleBySize(52)
-    local reserved_h = Screen:scaleBySize(280)  -- header + tabs + progress + pagination
+    local row_h = Screen:scaleBySize(Config.UI.row_height_class_detail)
+    local reserved_h = Screen:scaleBySize(Config.UI.reserved_height_class_detail)  -- header + tabs + progress + pagination
     local available_h = screen_h - reserved_h
     local items_per_page = math.max(3, math.floor(available_h / (row_h + 1)))
 
@@ -1579,8 +1593,8 @@ function ClassDetailScreen:buildNotecardsTab(items, screen_w, screen_h, content_
     end
 
     -- Paginate
-    local row_h = Screen:scaleBySize(56)
-    local reserved_h = Screen:scaleBySize(280)  -- header + tabs + progress + pagination
+    local row_h = Screen:scaleBySize(Config.UI.row_height_class_notecards)
+    local reserved_h = Screen:scaleBySize(Config.UI.reserved_height_class_notecards)  -- header + tabs + progress + pagination
     local available_h = screen_h - reserved_h
     local items_per_page = math.max(3, math.floor(available_h / (row_h + 1)))
 
@@ -1924,8 +1938,8 @@ function ClassDetailScreen:buildHighlightsTab(items, screen_w, screen_h, content
     end
 
     -- Paginate
-    local row_h = Screen:scaleBySize(60)
-    local reserved_h = Screen:scaleBySize(280)  -- header + tabs + progress + pagination
+    local row_h = Screen:scaleBySize(Config.UI.row_height_class_highlights)
+    local reserved_h = Screen:scaleBySize(Config.UI.reserved_height_class_highlights)  -- header + tabs + progress + pagination
     local available_h = screen_h - reserved_h
     local items_per_page = math.max(3, math.floor(available_h / (row_h + 1)))
 
@@ -2213,8 +2227,8 @@ function BookPickerScreen:buildUI()
 
     -- Book list (paginated)
     local books = self.books or {}
-    local row_h = Screen:scaleBySize(48)
-    local reserved_h = Screen:scaleBySize(200)  -- header + hint + pagination
+    local row_h = Screen:scaleBySize(Config.UI.row_height_book_picker)
+    local reserved_h = Screen:scaleBySize(Config.UI.reserved_height_book_picker)  -- header + hint + pagination
     local available_h = screen_h - reserved_h
     local items_per_page = math.max(3, math.floor(available_h / (row_h + 1)))
 
