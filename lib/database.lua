@@ -22,6 +22,10 @@ local logger = require("logger")
 
 local Database = {}
 
+-- In-memory preference storage (persists for the session)
+-- TODO: Replace with SQLite when full DB is implemented
+Database._prefs = {}
+
 -- ============================================
 -- INITIALIZATION
 -- ============================================
@@ -41,12 +45,15 @@ end
 -- ============================================
 
 function Database:getPref(key, default)
-    -- TODO: SELECT from prefs table
+    -- TODO: Replace with SELECT from prefs table
+    local val = self._prefs[key]
+    if val ~= nil then return val end
     return default
 end
 
-function Database:setPref(key, value) -- luacheck: ignore 212
-    -- TODO: INSERT/UPDATE prefs table
+function Database:setPref(key, value)
+    -- TODO: Replace with INSERT/UPDATE prefs table
+    self._prefs[key] = value
     return true
 end
 
