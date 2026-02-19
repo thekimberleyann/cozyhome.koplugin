@@ -268,6 +268,8 @@ function SettingsScreen:showSubScreen(title, rows)
     -- Close any existing sub-screen before opening a new one
     -- (prevents stacking when settings callbacks re-open the same screen)
     if self._current_sub_screen then
+        -- Set flag so the closing sub-screen's onClose doesn't rebuild the parent
+        self._current_sub_screen._replacing = true
         UIManager:close(self._current_sub_screen)
         self._current_sub_screen = nil
     end
@@ -339,10 +341,14 @@ function SettingsScreen:showSubScreen(title, rows)
         return true
     end
     function SubScreen:onCloseWidget()
-        UIManager:setDirty(nil, function() return "full", self.dimen end)
+        if not self._replacing then
+            UIManager:setDirty(nil, function() return "full", self.dimen end)
+        end
     end
     function SubScreen:onClose()
         UIManager:close(self)
+        -- If we're being replaced by another sub-screen, don't rebuild parent
+        if self._replacing then return true end
         settings_screen._current_sub_screen = nil
         settings_screen:buildUI()
         UIManager:setDirty(settings_screen, function() return "full", settings_screen.dimen end)
