@@ -1,0 +1,14 @@
+# ── Files excluded from release archives (git archive / GitHub releases) ──
+# Dev-only: these are not needed on the Kobo device
+
+.git/                   export-ignore
+.github/                export-ignore
+.githooks/              export-ignore
+spec/                   export-ignore
+screenshots/            export-ignore
+
+.busted                 export-ignore
+.gitattributes          export-ignore
+.gitignore              export-ignore
+.luacheckrc             export-ignore
+.luacheckrc.bak         export-ignore
