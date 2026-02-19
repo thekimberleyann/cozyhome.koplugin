@@ -37,3 +37,6 @@ settings.reader.lua
 .luacheckcache
 luacov.stats.out
 luacov.report.out
+
+# ── Release archives ──
+*.zip
