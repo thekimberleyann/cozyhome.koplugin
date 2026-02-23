@@ -499,8 +499,14 @@ function AnkiExport.exportToApkg(cards, deck_name, filename)
 
     deck_name = deck_name or "Cozy Reader"
     filename = filename or ("cozy_export_" .. os.date("%Y%m%d_%H%M%S"))
-    -- Sanitize filename: remove path separators
+    -- Sanitize filename: strip path separators, .., and non-printable chars
     filename = filename:gsub("[/\\]", "_")
+    filename = filename:gsub("[%c]", "")  -- strip control characters
+    -- Remove path traversal sequences (use plain find to avoid Lua pattern issues)
+    while filename:find("..", 1, true) do
+        filename = filename:gsub("%%.%.", "_")
+    end
+    if filename == "" then filename = "cozy_export_" .. os.date("%Y%m%d_%H%M%S") end
 
     local temp_dir = getTempDir()
     local db_path = temp_dir .. "/collection.anki21"

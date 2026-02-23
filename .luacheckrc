@@ -48,5 +48,5 @@ files["lib/kobo.lua"] = {
 exclude_files = {
     ".git/**",
     "data/**",
-    "lib/database.lua",  -- placeholder file, not valid Lua yet
+
 }

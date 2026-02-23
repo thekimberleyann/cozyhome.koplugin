@@ -44,7 +44,7 @@ local logger = require("logger")
 
 local shared_keys = {
     "config", "lib/database", "home", "statusbar", "history",
-    "learningspace", "notecards",
+    "learningspace", "flashcards",
     "settings", "highlight_bridge", "lib/bookscanner",
     "lib/highlights",
     "lib/kobo", "lib/anki_export", "lib/anki_import",

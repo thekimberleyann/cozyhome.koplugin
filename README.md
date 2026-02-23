@@ -42,13 +42,13 @@ highlights, flashcards, and study tools.
 ### Learning Spaces
 - Create named classes/topics (e.g. "Spanish", "LeetCode")
 - Add book shortcuts to a class
-- Three-tab detail view: Books, Notecards, Highlights
-- Notecards tab auto-populates from class books' flashcards
+- Three-tab detail view: Books, Flashcards, Highlights
+- Flashcards tab auto-populates from class books' flashcards
 - Link extra flashcards to a class with the card linker
 - Highlights tab shows all highlights from class books
 - Per-class quick resume (last book + position)
 
-### Notecards Hub
+### Flashcards Hub
 - Two-tab interface: Stacks (deck tiles) and All Cards (flat list)
 - **Self-contained review engine** — review flashcards directly from Cozy Home with no external plugin required
 - Full SM-2 spaced repetition algorithm (Again / Hard / Good / Easy ratings)
@@ -96,7 +96,7 @@ cozyhome.koplugin/
 ├── highlights.lua        Highlights browser screen
 ├── highlight_bridge.lua  Flashcard creation from highlights
 ├── learningspace.lua     Learning spaces / topic organization
-├── notecards.lua         Notecards hub (stacks, cards, built-in review)
+├── flashcards.lua        Flashcards hub (stacks, cards, built-in review)
 ├── focusmode.lua         Pomodoro focus timer
 ├── settings.lua          Settings hub screen
 ├── statusbar.lua         Top status bar widget

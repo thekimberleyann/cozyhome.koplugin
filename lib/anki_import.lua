@@ -50,7 +50,11 @@ local MAX_IMPORT_SIZE_MB = 100           -- Safety limit for .apkg file size
 -- SECURE HELPER FUNCTIONS
 -- ============================================
 
--- shellEscape removed — os.execute fallbacks eliminated for security
+--- Shell-quote a string for safe use in os.execute().
+-- Wraps in single quotes and escapes any embedded single quotes.
+local function shellQuote(s)
+    return "'" .. s:gsub("'", "'\\''" ) .. "'"
+end
 
 local function safeRemoveDirectory(dir_path)
     if not dir_path or dir_path == "" or dir_path == "/" or dir_path == "/mnt" then
@@ -153,6 +157,28 @@ end
 -- ZIP EXTRACTION
 -- ============================================
 
+--- Sanitize a filename from a ZIP entry to prevent path traversal.
+-- Strips path separators, .., and only allows known safe filenames.
+-- @param filename string: raw filename from ZIP entry
+-- @return string or nil: sanitized basename, or nil if unsafe
+local function sanitizeZipFilename(filename)
+    if not filename or filename == "" then return nil end
+    -- Strip any directory components — we only want the basename
+    local basename = filename:match("([^/\\]+)$")
+    if not basename or basename == "" then return nil end
+    -- Reject any remaining path traversal attempts
+    if basename:find("..", 1, true) then return nil end
+    -- Only allow known Anki collection files
+    local allowed = {
+        ["collection.anki21"] = true,
+        ["collection.anki2"] = true,
+        ["collection"] = true,
+        ["media"] = true,
+    }
+    if not allowed[basename] then return nil end
+    return basename
+end
+
 --- Pure-Lua extraction of uncompressed ZIP files.
 local function extractSimpleZip(zip_path, output_dir)
     local file = io.open(zip_path, "rb")
@@ -187,17 +213,12 @@ local function extractSimpleZip(zip_path, output_dir)
 
         if compression == 0 and compressed_size == uncompressed_size then
             local file_data = content:sub(data_start, data_start + compressed_size - 1)
-            -- Sanitize filename (prevent path traversal)
-            local safe_name = filename:gsub("^/+", "")
-            -- Reject any filename containing ".." (path traversal)
-            if safe_name:find("..", 1, true) then goto next_entry end
-            if not safe_name:match("/$") and #safe_name > 0 then
+            local safe_name = sanitizeZipFilename(filename)
+            if safe_name then
                 local out = io.open(output_dir .. "/" .. safe_name, "wb")
                 if out then out:write(file_data); out:close(); extracted = extracted + 1 end
             end
         end
-
-        ::next_entry::
         pos = data_start + compressed_size
     end
 
@@ -206,19 +227,19 @@ end
 
 --- Extracts the .apkg archive using available methods.
 local function extractApkg(apkg_path, temp_dir)
-    -- Method 1: KOReader's ffi/zipfile
+    -- Method 1: KOReader's FFI zipfile (handles DEFLATE, available on device)
     local zipfile_ok, ZipFile = pcall(require, "ffi/zipfile")
     if zipfile_ok and ZipFile then
         local zip = ZipFile:new{}
-        if zip:open(apkg_path) then
+        local open_ok = zip:open(apkg_path)
+        if open_ok then
             local entries = zip:list()
             if entries then
                 for _, entry in ipairs(entries) do
                     local content = zip:read(entry)
                     if content then
-                        local safe_name = entry:gsub("^/+", "")
-                        -- Reject filenames with path traversal
-                        if not safe_name:find("..", 1, true) and #safe_name > 0 and not safe_name:match("/$") then
+                        local safe_name = sanitizeZipFilename(entry)
+                        if safe_name then
                             local out = io.open(temp_dir .. "/" .. safe_name, "wb")
                             if out then out:write(content); out:close() end
                         end
@@ -232,9 +253,24 @@ local function extractApkg(apkg_path, temp_dir)
         end
     end
 
-    -- Method 2: Pure-Lua
-    -- (os.execute shell fallback removed for security — shell injection risk)
-    return extractSimpleZip(apkg_path, temp_dir)
+    -- Method 2: System unzip command (handles DEFLATE, available on Linux/Kobo)
+    -- Safe: paths are shell-quoted, and we only extract whitelisted filenames
+    local unzip_cmd = string.format(
+        "unzip -o -j %s collection.anki21 collection.anki2 collection media -d %s 2>/dev/null",
+        shellQuote(apkg_path),
+        shellQuote(temp_dir)
+    )
+    os.execute(unzip_cmd)
+    -- Don't check exit code — unzip returns non-zero if some filenames aren't matched,
+    -- even when others extract successfully. Just check if the files we need are there.
+    if fileExists(temp_dir .. "/collection.anki21") or fileExists(temp_dir .. "/collection.anki2") then
+        return true
+    end
+
+    -- Method 3: Pure-Lua fallback (only handles STORED/uncompressed entries)
+    if extractSimpleZip(apkg_path, temp_dir) then return true end
+
+    return false
 end
 
 --- Finds the collection database in extracted files.
@@ -322,12 +358,13 @@ end
 
 --- Inserts a single flashcard into cozy_flashcards.db.
 -- @param conn: open DB connection
--- @param card table: {front, back, book_title, source_chapter}
+-- @param card table: {front, back, book_title, source_chapter, deck_id}
 -- @return integer or nil: new card ID
 local function insertFlashcard(conn, card)
+    local deck_id = card.deck_id or 1
     local stmt = conn:prepare([[
         INSERT INTO flashcards (front, back, book_title, source_chapter, state, deck_id)
-        VALUES (?, ?, ?, ?, 'new', 1)
+        VALUES (?, ?, ?, ?, 'new', ?)
     ]])
     if not stmt then return nil end
 
@@ -335,7 +372,8 @@ local function insertFlashcard(conn, card)
         (card.front or ""):sub(1, 5000),
         (card.back or ""):sub(1, 5000),
         card.book_title,
-        card.source_chapter
+        card.source_chapter,
+        deck_id
     )
 
     local ok = pcall(function() stmt:step() end)
@@ -354,8 +392,10 @@ end
 
 --- Imports cards from an Anki .apkg file into cozy_flashcards.db.
 -- @param apkg_path string: Path to the .apkg file
+-- @param options table: Optional {deck_id = number} to assign imported cards to a specific deck
 -- @return boolean, string, number: success, message, imported_count
-function AnkiImport.importFromApkg(apkg_path)
+function AnkiImport.importFromApkg(apkg_path, options)
+    options = options or {}
 
     if not apkg_path or not fileExists(apkg_path) then
         return false, "File not found: " .. tostring(apkg_path), 0
@@ -479,6 +519,7 @@ function AnkiImport.importFromApkg(apkg_path)
                 back = card_data.back,
                 book_title = "Anki Import: " .. deck_name,
                 source_chapter = model_info.name,
+                deck_id = options.deck_id,
             }
 
             local card_id = insertFlashcard(flash_conn, new_card)
@@ -503,6 +544,16 @@ function AnkiImport.importFromApkg(apkg_path)
     return true, message, imported
 end
 
+--- Gets the import folder path, creating it if needed.
+-- Lives alongside the plugin's database in KOReader's settings directory,
+-- so it works on both device (/mnt/onboard/.adds/koreader/settings/imports)
+-- and emulator (~/.config/koreader/settings/imports).
+function AnkiImport.getImportDir()
+    local dir = DataStorage:getSettingsDir() .. "/imports"
+    lfs.mkdir(dir)
+    return dir
+end
+
 --- Lists .apkg files in common locations on the device.
 -- @param dir_path string: Specific directory to scan (nil = scan defaults)
 -- @return table: Array of {path, filename, size, modified, size_kb}
@@ -513,6 +564,8 @@ function AnkiImport.listApkgFiles(dir_path)
     if dir_path then
         table.insert(dirs_to_check, dir_path)
     else
+        -- Check the dedicated import dir first
+        table.insert(dirs_to_check, AnkiImport.getImportDir())
         table.insert(dirs_to_check, "/mnt/onboard")
         table.insert(dirs_to_check, "/mnt/onboard/imports")
         table.insert(dirs_to_check, "/mnt/onboard/Anki")

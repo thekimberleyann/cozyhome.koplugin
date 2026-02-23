@@ -27,14 +27,14 @@ return {
 
 Access from the Tools menu. Features a tappable tile grid
 with quick access to your books, highlights, learning spaces,
-notecards, and settings.
+flashcards, and settings.
 
 Version 0.12.0:
 - Welcome screen with customizable tile grid
 - Library browser (list, covers, gallery views)
 - Full-screen highlights browser with search and filters
 - Learning spaces for grouping study material
-- Notecards hub with deck management and review
+- Flashcards hub with deck management and review
 - Highlight-to-flashcard creation (single and batch)
 - Kobo native highlight integration]]),
     version = "0.12.0",
