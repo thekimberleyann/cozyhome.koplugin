@@ -713,7 +713,93 @@ function CardDB.getDueCardsByDecks(deck_ids, limit, new_card_limit)
     return cards
 end
 
---- Record a review using SM-2 algorithm. Updates card state + logs history.
+--- Compute interval previews for all four rating buttons.
+-- Returns table with keys: again, hard, good, easy
+-- Each has: {interval_minutes, label}
+function CardDB.previewIntervals(card)
+    local preset = getSchedulingPreset()
+    local previews = {}
+    local card_state = card.state or "new"
+    local current_step = card.learning_step or 0
+    local old_interval = card.interval_days or 0
+    local old_ease = card.ease_factor or 2.5
+
+    local is_learning = (card_state == "new" or card_state == "learning")
+    local is_relearning = (card_state == "relearning")
+
+    if is_learning then
+        local steps = preset.learning_steps
+        local again_min = steps[1]
+        previews.again = { interval_minutes = again_min, label = formatInterval(again_min) }
+
+        local hard_min
+        if current_step == 0 then
+            hard_min = math.floor(steps[1] * 1.5)
+        else
+            local cur = steps[current_step + 1] or steps[#steps]
+            local nxt = steps[current_step + 2] or (preset.graduating_interval * 1440)
+            hard_min = math.floor((cur + nxt) / 2)
+        end
+        previews.hard = { interval_minutes = hard_min, label = formatInterval(hard_min) }
+
+        local next_step = current_step + 1
+        if next_step >= #steps then
+            local grad_min = preset.graduating_interval * 1440
+            previews.good = { interval_minutes = grad_min, label = formatInterval(grad_min) }
+        else
+            local good_min = steps[next_step + 1]
+            previews.good = { interval_minutes = good_min, label = formatInterval(good_min) }
+        end
+
+        local easy_min = preset.easy_interval * 1440
+        previews.easy = { interval_minutes = easy_min, label = formatInterval(easy_min) }
+
+    elseif is_relearning then
+        local steps = preset.relearning_steps
+        local again_min = steps[1]
+        previews.again = { interval_minutes = again_min, label = formatInterval(again_min) }
+
+        local hard_min
+        if current_step == 0 then
+            hard_min = math.floor(steps[1] * 1.5)
+        else
+            local cur = steps[current_step + 1] or steps[#steps]
+            local nxt = steps[current_step + 2] or (math.max(preset.min_relearn_interval, math.floor(old_interval * 0.5)) * 1440)
+            hard_min = math.floor((cur + nxt) / 2)
+        end
+        previews.hard = { interval_minutes = hard_min, label = formatInterval(hard_min) }
+
+        local next_step = current_step + 1
+        if next_step >= #steps then
+            local regrad_days = math.max(preset.min_relearn_interval, math.floor(old_interval * 0.5))
+            previews.good = { interval_minutes = regrad_days * 1440, label = formatInterval(regrad_days * 1440) }
+        else
+            local good_min = steps[next_step + 1]
+            previews.good = { interval_minutes = good_min, label = formatInterval(good_min) }
+        end
+
+        local regrad_days = math.max(preset.min_relearn_interval, math.floor(old_interval * 0.5))
+        previews.easy = { interval_minutes = regrad_days * 1440, label = formatInterval(regrad_days * 1440) }
+
+    else
+        -- REVIEW state
+        local again_min = preset.relearning_steps[1]
+        previews.again = { interval_minutes = again_min, label = formatInterval(again_min) }
+
+        local hard_days = math.max(1, math.floor(old_interval * 1.2))
+        previews.hard = { interval_minutes = hard_days * 1440, label = formatInterval(hard_days * 1440) }
+
+        local good_days = math.max(1, math.floor(old_interval * old_ease))
+        previews.good = { interval_minutes = good_days * 1440, label = formatInterval(good_days * 1440) }
+
+        local easy_days = math.max(1, math.floor(old_interval * old_ease * 1.3))
+        previews.easy = { interval_minutes = easy_days * 1440, label = formatInterval(easy_days * 1440) }
+    end
+
+    return previews
+end
+
+--- Record a review using Anki-style learning steps + SM-2 for review cards.
 -- @param card_id number: flashcard ID
 -- @param rating number: 0 (Again), 2 (Hard), 3 (Good), 5 (Easy)
 -- @param time_taken_ms number: milliseconds spent on card
@@ -730,62 +816,131 @@ function CardDB.recordReview(card_id, rating, time_taken_ms)
     pcall(function()
         ensureReviewTables(conn)
 
+        local preset = getSchedulingPreset()
         local old_interval = tonumber(card.interval_days) or 0
         local old_ease = tonumber(card.ease_factor) or DEFAULT_EASE
         rating = tonumber(rating) or 0
-        local is_correct = rating >= 2  -- Hard (2) and above count as "not failed"
+        local is_correct = rating >= 2
 
-        local new_interval, new_ease, new_state
-        local is_new = (card.state == "new") or ((card.review_count or 0) == 0)
-        if rating >= 3 then
-            -- Good (3) or Easy (5): standard SM-2 progression
-            new_ease = old_ease + (0.1 - (5 - rating) * (0.08 + (5 - rating) * 0.02))
-            new_ease = math.max(MIN_EASE, tonumber(new_ease) or MIN_EASE)
+        local card_state = card.state or "new"
+        local current_step = card.learning_step or 0
 
-            if is_new then
-                -- Graduating intervals for new cards: Good=1d, Easy=4d
-                if rating == 5 then
-                    new_interval = 4
+        local new_interval_days = old_interval
+        local new_ease = old_ease
+        local new_state = card_state
+        local new_learning_step = current_step
+        local next_review_minutes = nil
+
+        local is_learning = (card_state == "new" or card_state == "learning")
+        local is_relearning = (card_state == "relearning")
+
+        if is_learning then
+            local steps = preset.learning_steps
+            if rating == 0 then
+                new_learning_step = 0
+                next_review_minutes = steps[1]
+                new_state = "learning"
+            elseif rating == 2 then
+                new_learning_step = current_step
+                if current_step == 0 then
+                    next_review_minutes = math.floor(steps[1] * 1.5)
                 else
-                    new_interval = 1
+                    local cur = steps[current_step + 1] or steps[#steps]
+                    local nxt = steps[current_step + 2] or (preset.graduating_interval * 1440)
+                    next_review_minutes = math.floor((cur + nxt) / 2)
                 end
-            elseif old_interval == 0 then new_interval = 1
-            elseif old_interval == 1 then new_interval = 3
-            else new_interval = math.floor(tonumber(old_interval * new_ease) or 1) end
-
-            -- Easy bonus for non-new cards: 1.3× multiplier
-            if rating == 5 and not is_new and new_interval > 1 then
-                new_interval = math.floor(new_interval * 1.3)
+                new_state = "learning"
+            elseif rating >= 3 then
+                if rating == 5 then
+                    new_state = "review"
+                    new_interval_days = preset.easy_interval
+                    new_learning_step = 0
+                    new_ease = old_ease + 0.15
+                    new_ease = math.max(MIN_EASE, new_ease)
+                else
+                    local next_step = current_step + 1
+                    if next_step >= #steps then
+                        new_state = "review"
+                        new_interval_days = preset.graduating_interval
+                        new_learning_step = 0
+                    else
+                        new_learning_step = next_step
+                        next_review_minutes = steps[next_step + 1]
+                        new_state = "learning"
+                    end
+                end
             end
 
-            new_state = "review"
-        elseif rating == 2 then
-            -- Hard: slight ease penalty, shorter interval than Good but still progresses
-            new_ease = math.max(MIN_EASE, tonumber(old_ease - 0.15) or MIN_EASE)
-
-            if is_new then
-                -- New card + Hard: review again tomorrow (same as Good but with ease penalty)
-                new_interval = 1
-            elseif old_interval <= 1 then
-                new_interval = 2
-            else
-                new_interval = math.max(2, math.floor(old_interval * 1.2))
+        elseif is_relearning then
+            local steps = preset.relearning_steps
+            if rating == 0 then
+                new_learning_step = 0
+                next_review_minutes = steps[1]
+                new_state = "relearning"
+                new_ease = math.max(MIN_EASE, old_ease - 0.2)
+            elseif rating == 2 then
+                new_learning_step = current_step
+                if current_step == 0 then
+                    next_review_minutes = math.floor(steps[1] * 1.5)
+                else
+                    local cur = steps[current_step + 1] or steps[#steps]
+                    local regrad_days = math.max(preset.min_relearn_interval, math.floor(old_interval * 0.5))
+                    local nxt = steps[current_step + 2] or (regrad_days * 1440)
+                    next_review_minutes = math.floor((cur + nxt) / 2)
+                end
+                new_state = "relearning"
+            elseif rating >= 3 then
+                if rating == 5 then
+                    local regrad_days = math.max(preset.min_relearn_interval, math.floor(old_interval * 0.5))
+                    new_interval_days = regrad_days
+                    new_state = "review"
+                    new_learning_step = 0
+                else
+                    local next_step = current_step + 1
+                    if next_step >= #steps then
+                        local regrad_days = math.max(preset.min_relearn_interval, math.floor(old_interval * 0.5))
+                        new_interval_days = regrad_days
+                        new_state = "review"
+                        new_learning_step = 0
+                    else
+                        new_learning_step = next_step
+                        next_review_minutes = steps[next_step + 1]
+                        new_state = "relearning"
+                    end
+                end
             end
-            new_state = "review"
+
         else
-            -- Again (0): full reset — review again in 10 minutes
-            new_ease = math.max(MIN_EASE, tonumber(old_ease - 0.2) or MIN_EASE)
-            new_interval = 0
-            new_state = (card.state == "review") and "relearning" or "learning"
+            -- REVIEW PHASE
+            if rating == 0 then
+                new_ease = math.max(MIN_EASE, old_ease - 0.2)
+                new_state = "relearning"
+                new_learning_step = 0
+                next_review_minutes = preset.relearning_steps[1]
+            elseif rating == 2 then
+                new_ease = math.max(MIN_EASE, old_ease - 0.15)
+                new_interval_days = math.max(1, math.floor(old_interval * 1.2))
+                new_state = "review"
+            elseif rating == 3 then
+                new_ease = old_ease + (0.1 - (5 - rating) * (0.08 + (5 - rating) * 0.02))
+                new_ease = math.max(MIN_EASE, new_ease)
+                new_interval_days = math.max(1, math.floor(old_interval * new_ease))
+                new_state = "review"
+            elseif rating == 5 then
+                new_ease = old_ease + (0.1 - (5 - rating) * (0.08 + (5 - rating) * 0.02))
+                new_ease = new_ease + 0.15
+                new_ease = math.max(MIN_EASE, new_ease)
+                new_interval_days = math.max(1, math.floor(old_interval * new_ease * 1.3))
+                new_state = "review"
+            end
         end
 
-        -- For interval=0 (Again), schedule 10 minutes from now
-        -- For interval>=1, schedule that many days out
+        -- Compute next_review timestamp
         local next_review
-        if new_interval <= 0 then
-            next_review = os.date("%Y-%m-%d %H:%M:%S", os.time() + 600)
+        if next_review_minutes then
+            next_review = os.date("%Y-%m-%d %H:%M:%S", os.time() + next_review_minutes * 60)
         else
-            next_review = os.date("%Y-%m-%d", os.time() + (new_interval * 86400))
+            next_review = os.date("%Y-%m-%d", os.time() + (new_interval_days * 86400))
         end
 
         -- Update card
@@ -795,10 +950,11 @@ function CardDB.recordReview(card_id, rating, time_taken_ms)
                 last_reviewed = datetime('now', 'localtime'),
                 review_count = review_count + 1,
                 correct_count = correct_count + ?,
-                state = ?
+                state = ?,
+                learning_step = ?
             WHERE id = ?
         ]])
-        stmt:bind(new_interval, new_ease, next_review, is_correct and 1 or 0, new_state, card_id)
+        stmt:bind(new_interval_days, new_ease, next_review, is_correct and 1 or 0, new_state, new_learning_step, card_id)
         stmt:step(); stmt:close()
 
         -- Log to review_history
@@ -807,7 +963,7 @@ function CardDB.recordReview(card_id, rating, time_taken_ms)
             (card_id, rating, time_taken_ms, old_interval, new_interval, old_ease, new_ease)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         ]])
-        h:bind(card_id, rating, time_taken_ms, old_interval, new_interval, old_ease, new_ease)
+        h:bind(card_id, rating, time_taken_ms, old_interval, new_interval_days, old_ease, new_ease)
         h:step(); h:close()
 
         -- Update daily_stats
@@ -1300,53 +1456,9 @@ function CozyStudyScreen:buildBackLayout()
     }
 end
 
+-- Delegates to CardDB.previewIntervals() which uses the active scheduling preset.
 function CozyStudyScreen:previewIntervals(card)
-    local previews = {}
-    local ratings = {again = 0, hard = 2, good = 3, easy = 5}
-    local is_new = (card.state == "new") or ((card.review_count or 0) == 0)
-    for name, rating in pairs(ratings) do
-        local old_interval = card.interval_days or 0
-        local old_ease = card.ease_factor or 2.5
-        local new_interval
-        if rating >= 3 then
-            -- Good (3) or Easy (5): standard SM-2 progression
-            local new_ease = old_ease + (0.1 - (5 - rating) * (0.08 + (5 - rating) * 0.02))
-            new_ease = math.max(1.3, new_ease)
-            if is_new then
-                -- Graduating intervals for new cards: Good=1d, Easy=4d
-                if rating == 5 then
-                    new_interval = 4
-                else
-                    new_interval = 1
-                end
-            elseif old_interval == 0 then new_interval = 1
-            elseif old_interval == 1 then new_interval = 3
-            else new_interval = math.floor(old_interval * new_ease) end
-            -- Easy bonus for non-new cards: 1.3× multiplier
-            if rating == 5 and not is_new and new_interval > 1 then
-                new_interval = math.floor(new_interval * 1.3)
-            end
-        elseif rating == 2 then
-            -- Hard: slight ease penalty, shorter interval but still progresses
-            if is_new then
-                -- New card + Hard: review again tomorrow
-                new_interval = 1
-            elseif old_interval <= 1 then
-                new_interval = 2
-            else
-                new_interval = math.max(2, math.floor(old_interval * 1.2))
-            end
-        else
-            -- Again: full reset — review again in 10 minutes
-            new_interval = 0
-        end
-        local label
-        if new_interval <= 0 then label = "10m"
-        elseif new_interval == 1 then label = "1d"
-        else label = tostring(new_interval) .. "d" end
-        previews[name] = {interval = new_interval, label = label}
-    end
-    return previews
+    return CardDB.previewIntervals(card)
 end
 
 function CozyStudyScreen:updateRatingLabels(previews)
@@ -2188,7 +2300,8 @@ function FlashcardsHub:buildStacksTab(items, sw, sh, content_w, pad)
         table.insert(items, VerticalSpan:new{ width = 6 })
     end
 
-    -- + New Deck button
+    -- + New Deck and Settings buttons
+    local action_btn_w = math.floor(content_w * 0.42)
     local new_deck_btn = Button:new{
         text = _("+ New Deck"),
         callback = function() hub:showCreateDeckDialog() end,
@@ -2196,11 +2309,27 @@ function FlashcardsHub:buildStacksTab(items, sw, sh, content_w, pad)
         radius = 8,
         text_font_size = 14,
         padding = 6,
+        width = action_btn_w,
+        show_parent = self,
+    }
+    local settings_btn = Button:new{
+        text = _("⚙ Scheduling"),
+        callback = function() hub:showSchedulingPresetMenu() end,
+        bordersize = 1,
+        radius = 8,
+        text_font_size = 14,
+        padding = 6,
+        width = action_btn_w,
         show_parent = self,
     }
     table.insert(items, CenterContainer:new{
         dimen = Geom:new{ w = sw, h = new_deck_btn:getSize().h + 4 },
-        new_deck_btn,
+        HorizontalGroup:new{
+            align = "center",
+            new_deck_btn,
+            HorizontalSpan:new{ width = 8 },
+            settings_btn,
+        },
     })
 
     -- ── Anki Export / Import buttons ──
@@ -2737,6 +2866,75 @@ end
 -- ============================================
 -- DECK MANAGEMENT
 -- ============================================
+
+-- ============================================
+-- SCHEDULING PRESET MENU
+-- ============================================
+
+--- Show a dialog to pick the scheduling preset.
+-- This lets standalone cozyhome users change the preset
+-- without needing the cozyflashcards plugin installed.
+function FlashcardsHub:showSchedulingPresetMenu()
+    local hub = self
+    local preset_order = {"relaxed", "standard", "intensive", "daily"}
+
+    -- Read current preset
+    local current_key = Config.DEFAULT_SCHEDULING_PRESET
+    pcall(function()
+        local G_reader_settings = require("luasettings"):open(
+            require("datastorage"):getSettingsDir() .. "/settings.reader.lua"
+        )
+        local fc_settings = G_reader_settings:readSetting("cozyflashcards") or {}
+        current_key = fc_settings.scheduling_preset or Config.DEFAULT_SCHEDULING_PRESET
+    end)
+
+    local button_rows = {}
+    for __, key in ipairs(preset_order) do
+        local preset = Config.SCHEDULING_PRESETS[key]
+        if preset then
+            local is_active = (key == current_key)
+            local prefix = is_active and "● " or "○ "
+            local steps_str = {}
+            for _, m in ipairs(preset.learning_steps) do
+                table.insert(steps_str, formatInterval(m))
+            end
+            local detail = table.concat(steps_str, " → ") .. " → " .. preset.graduating_interval .. "d"
+
+            table.insert(button_rows, {
+                {
+                    text = prefix .. preset.label .. "\n   " .. detail,
+                    callback = function()
+                        UIManager:close(hub._scheduling_dialog)
+                        -- Save the preset to G_reader_settings (shared key)
+                        pcall(function()
+                            local G_reader_settings = require("luasettings"):open(
+                                require("datastorage"):getSettingsDir() .. "/settings.reader.lua"
+                            )
+                            local fc_settings = G_reader_settings:readSetting("cozyflashcards") or {}
+                            fc_settings.scheduling_preset = key
+                            G_reader_settings:saveSetting("cozyflashcards", fc_settings)
+                            G_reader_settings:flush()
+                        end)
+                        UIManager:show(InfoMessage:new{
+                            text = string.format(_("Scheduling set to: %s"), preset.label),
+                            timeout = 2,
+                        })
+                    end,
+                },
+            })
+        end
+    end
+
+    table.insert(button_rows, {
+        { text = _("Cancel"), callback = function() UIManager:close(hub._scheduling_dialog) end },
+    })
+
+    hub._scheduling_dialog = ButtonDialog:new{
+        title = _("✦ Scheduling Preset ✦"),
+        buttons = button_rows,
+    }
+    UIManager:show(hub._scheduling_dialog)
+end
 
 function FlashcardsHub:showCreateDeckDialog()
     local hub = self
