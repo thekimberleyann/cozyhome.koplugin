@@ -63,8 +63,8 @@ Config.TILES = {
         description = "Organize books and cards by subject",
     },
     {
-        key = "notecards",
-        label = "Notecards",
+        key = "flashcards",
+        label = "Flashcards",
         icon_text = "[?]",
         enabled = true,
         description = "Browse and review flashcards",
@@ -152,9 +152,10 @@ Config.UI = {
     row_height_class_detail = 52,
     reserved_height_class_detail = 280,
 
-    -- Learning Space: class detail — notecards tab
-    row_height_class_notecards = 56,
-    reserved_height_class_notecards = 280,
+    -- Learning Space: class detail — flashcards tab
+    row_height_class_flashcards = 56,
+    reserved_height_class_flashcards = 280,
+
 
     -- Learning Space: class detail — highlights tab
     row_height_class_highlights = 60,
@@ -163,6 +164,9 @@ Config.UI = {
     -- Learning Space: book picker
     row_height_book_picker = 48,
     reserved_height_book_picker = 200,
+
+    -- Flashcards hub
+    progress_bar_chars = 12,
 }
 
 -- ============================================
@@ -192,6 +196,60 @@ Config.FOCUS = {
     long_break = 15,
     sessions_before_long_break = 4,
 }
+
+-- ============================================
+-- SCHEDULING PRESETS
+-- ============================================
+-- Each preset defines learning steps (in minutes), graduating interval,
+-- easy interval, and relearning steps. The user picks one preset;
+-- all scheduling numbers flow from it.
+--
+-- learning_steps: array of intervals in MINUTES for the learning phase
+-- graduating_interval: days after final Good press graduates a card
+-- easy_interval: days when Easy pressed on a new/learning card
+-- relearning_steps: array of intervals in MINUTES after a lapse
+-- min_relearn_interval: minimum days after completing relearning
+
+Config.SCHEDULING_PRESETS = {
+    relaxed = {
+        label = "Relaxed (recommended)",
+        description = "Gentle spacing for casual readers",
+        learning_steps = {10, 1440, 4320},  -- 10m, 1d, 3d
+        graduating_interval = 4,             -- days after final Good
+        easy_interval = 7,                   -- days when Easy pressed on new card
+        relearning_steps = {10, 1440},       -- 10m, 1d after lapse
+        min_relearn_interval = 1,            -- minimum days after relearning
+    },
+    standard = {
+        label = "Standard (Anki default)",
+        description = "Classic Anki timing",
+        learning_steps = {1, 10},            -- 1m, 10m
+        graduating_interval = 1,
+        easy_interval = 4,
+        relearning_steps = {10},             -- 10m
+        min_relearn_interval = 1,
+    },
+    intensive = {
+        label = "Intensive",
+        description = "Tighter intervals for exam prep",
+        learning_steps = {1, 10, 60},        -- 1m, 10m, 1h
+        graduating_interval = 1,
+        easy_interval = 3,
+        relearning_steps = {1, 10},          -- 1m, 10m
+        min_relearn_interval = 1,
+    },
+    daily = {
+        label = "Daily reader",
+        description = "One review per day, simple progression",
+        learning_steps = {1440},             -- 1d only
+        graduating_interval = 3,
+        easy_interval = 5,
+        relearning_steps = {1440},           -- 1d
+        min_relearn_interval = 1,
+    },
+}
+
+Config.DEFAULT_SCHEDULING_PRESET = "relaxed"
 
 -- ============================================
 -- DEBUG SETTINGS

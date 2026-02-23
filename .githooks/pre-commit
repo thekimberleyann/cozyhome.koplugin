@@ -18,7 +18,7 @@ STAGED_LUA=$(git diff --cached --name-only --diff-filter=ACM | grep '\.lua$' || 
 
 if [ -n "$STAGED_LUA" ]; then
     echo "  ▸ Running luacheck on staged files..."
-    if echo "$STAGED_LUA" | xargs luacheck --no-color; then
+    if echo "$STAGED_LUA" | xargs luacheck; then
         echo "  ✔ Luacheck passed"
     else
         echo "  ✗ Luacheck failed. Fix warnings before committing."
@@ -31,7 +31,7 @@ fi
 # ── Step 2: Run tests ──
 if [ -d "spec" ] && ls spec/*_spec.lua 1>/dev/null 2>&1; then
     echo "  ▸ Running busted tests..."
-    if busted --no-color spec/; then
+    if busted spec/; then
         echo "  ✔ Tests passed"
     else
         echo "  ✗ Tests failed. Fix before committing."

@@ -7,197 +7,691 @@
 --
 --   🎀 Description:
 --       SQLite database wrapper for Cozy Home.
---       Manages notebooks, classes, flashcards,
---       focus sessions, and user preferences.
---
---   🎀 Status:       STUB — returns safe no-op values
---       so that all modules can load without errors.
---       Replace with full SQLite implementation when ready.
+--       Manages classes (learning spaces), class-book
+--       associations, class-card links, focus sessions,
+--       focus game data, hidden folders, and user
+--       preferences. All functions open/close their own
+--       connections or reuse the shared connection.
 --
 --   🎀 License:      MIT
 --
 -- + ⊹ 🎀 ⋆ 🌙 ⋆ ☆ ⋆ ☀️ ⋆ 🎀 ⊹ +
 
+local SQ3 = require("lua-ljsqlite3/init")
+local DataStorage = require("datastorage")
+local Device = require("device")
 local logger = require("logger")
+
+-- Config may already be loaded by home.lua or main.lua.
+-- If it's missing the DATABASE field, clear and re-require to get our plugin's config.
+local Config = require("config")
+if not Config.DATABASE then
+    package.loaded["config"] = nil
+    Config = require("config")
+end
 
 local Database = {}
 
--- In-memory preference storage (persists for the session)
--- TODO: Replace with SQLite when full DB is implemented
-Database._prefs = {}
+-- Shared connection (opened once, reused)
+local _conn = nil
+local _tables_created = false
+
+-- ============================================
+-- CONNECTION MANAGEMENT
+-- ============================================
+
+local function getDatabasePath()
+    return DataStorage:getSettingsDir() .. "/" .. Config.DATABASE.filename
+end
+
+-- Forward declaration
+local createTables
+
+--- Open or return the shared database connection.
+-- Creates tables on first open.
+local function ensureConn()
+    if _conn then return _conn end
+
+    local db_path = getDatabasePath()
+    local ok, conn = pcall(SQ3.open, db_path)
+    if not ok or not conn then
+        logger.warn("CozyHome DB: Failed to open database:", tostring(conn))
+        return nil
+    end
+
+    -- Performance pragmas for slow Kobo storage
+    if Device:canUseWAL() then
+        pcall(function() conn:exec("PRAGMA journal_mode=WAL;") end)
+    end
+    pcall(function() conn:exec("PRAGMA synchronous=NORMAL;") end)
+    pcall(function() conn:exec("PRAGMA busy_timeout=3000;") end)
+    -- Enable foreign key enforcement
+    pcall(function() conn:exec("PRAGMA foreign_keys=ON;") end)
+
+    _conn = conn
+
+    -- Create tables on first connection
+    if not _tables_created then
+        local tok, terr = pcall(createTables, conn)
+        if tok then
+            _tables_created = true
+            logger.dbg("CozyHome DB: tables initialized")
+        else
+            logger.warn("CozyHome DB: Failed to create tables:", terr)
+        end
+    end
+
+    return conn
+end
+
+--- Create all required tables. Called once on first open.
+createTables = function(conn)
+    -- Preferences (key-value store)
+    conn:exec([[
+        CREATE TABLE IF NOT EXISTS preferences (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        );
+    ]])
+
+    -- Classes (learning spaces)
+    conn:exec([[
+        CREATE TABLE IF NOT EXISTS classes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            icon TEXT,
+            color TEXT,
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            sort_order INTEGER DEFAULT 0
+        );
+    ]])
+
+    -- Class-book associations
+    conn:exec([[
+        CREATE TABLE IF NOT EXISTS class_books (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            class_id INTEGER NOT NULL,
+            book_path TEXT NOT NULL,
+            book_title TEXT,
+            book_author TEXT,
+            added_at TEXT DEFAULT (datetime('now', 'localtime')),
+            UNIQUE(class_id, book_path),
+            FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
+        );
+    ]])
+
+    -- Class-card links (link flashcard IDs from cozy_flashcards.db to a class)
+    conn:exec([[
+        CREATE TABLE IF NOT EXISTS class_cards (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            class_id INTEGER NOT NULL,
+            card_id INTEGER NOT NULL,
+            added_at TEXT DEFAULT (datetime('now', 'localtime')),
+            UNIQUE(class_id, card_id),
+            FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
+        );
+    ]])
+
+    -- Class last-opened book (quick resume)
+    conn:exec([[
+        CREATE TABLE IF NOT EXISTS class_last_book (
+            class_id INTEGER PRIMARY KEY,
+            book_path TEXT NOT NULL,
+            updated_at TEXT DEFAULT (datetime('now', 'localtime')),
+            FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
+        );
+    ]])
+
+    -- Focus sessions
+    conn:exec([[
+        CREATE TABLE IF NOT EXISTS focus_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            book_path TEXT,
+            book_title TEXT,
+            started_at TEXT DEFAULT (datetime('now', 'localtime')),
+            duration_minutes INTEGER NOT NULL,
+            pages_read INTEGER DEFAULT 0,
+            xp_earned INTEGER DEFAULT 0,
+            completed INTEGER DEFAULT 1
+        );
+    ]])
+
+    -- Focus game data (single-row JSON blob)
+    conn:exec([[
+        CREATE TABLE IF NOT EXISTS focus_game_data (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            data TEXT NOT NULL,
+            updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+        );
+    ]])
+
+    -- Hidden folders (for library scanner)
+    conn:exec([[
+        CREATE TABLE IF NOT EXISTS hidden_folders (
+            path TEXT PRIMARY KEY
+        );
+    ]])
+
+    -- Indexes
+    pcall(function()
+        conn:exec("CREATE INDEX IF NOT EXISTS idx_class_books_class ON class_books(class_id);")
+        conn:exec("CREATE INDEX IF NOT EXISTS idx_class_books_path ON class_books(book_path);")
+        conn:exec("CREATE INDEX IF NOT EXISTS idx_class_cards_class ON class_cards(class_id);")
+        conn:exec("CREATE INDEX IF NOT EXISTS idx_focus_sessions_date ON focus_sessions(started_at);")
+    end)
+end
 
 -- ============================================
 -- INITIALIZATION
 -- ============================================
 
+--- Initialize the database. Opens connection and creates tables.
 function Database:init()
-    -- TODO: Open/create SQLite database
-    logger.dbg("CozyHome Database: stub init()")
+    ensureConn()
 end
 
+--- Open the database connection (alias for init, called by settings).
 function Database:open()
-    -- TODO: Open SQLite database connection
-    logger.dbg("CozyHome Database: stub open()")
+    ensureConn()
+end
+
+--- Get the raw SQLite connection (for advanced/direct queries).
+-- @return connection or nil
+function Database:getConn()
+    self:init()
+    return _conn
+end
+
+--- Close the database connection.
+function Database:close()
+    if _conn then
+        pcall(function() _conn:close() end)
+        _conn = nil
+        _tables_created = false
+        logger.dbg("CozyHome DB: closed")
+    end
 end
 
 -- ============================================
 -- PREFERENCES
 -- ============================================
 
+--- Get a preference value.
+-- @param key string
+-- @param default any: returned if key not found
+-- @return string value or default
 function Database:getPref(key, default)
-    -- TODO: Replace with SELECT from prefs table
-    local val = self._prefs[key]
-    if val ~= nil then return val end
-    return default
+    local conn = ensureConn()
+    if not conn then return default end
+
+    local value = default
+    pcall(function()
+        local stmt = conn:prepare("SELECT value FROM preferences WHERE key = ?")
+        if stmt then
+            stmt:bind(key)
+            local row = stmt:step()
+            if row then value = row[1] end
+            stmt:close()
+        end
+    end)
+    return value
 end
 
+--- Set a preference value.
+-- @param key string
+-- @param value string
+-- @return boolean success
 function Database:setPref(key, value)
-    -- TODO: Replace with INSERT/UPDATE prefs table
-    self._prefs[key] = value
+    local conn = ensureConn()
+    if not conn then return false end
+
+    local ok, err = pcall(function()
+        local stmt = conn:prepare(
+            "INSERT OR REPLACE INTO preferences (key, value) VALUES (?, ?)"
+        )
+        if stmt then
+            stmt:bind(key, tostring(value))
+            stmt:step()
+            stmt:close()
+        end
+    end)
+    if not ok then
+        logger.warn("CozyHome DB: setPref failed:", err)
+        return false
+    end
     return true
 end
 
 -- ============================================
--- NOTEBOOKS
+-- CLASSES (Learning Spaces)
 -- ============================================
 
-function Database:getNotebooks()
-    return {}
-end
-
-function Database:getNotebook(id) -- luacheck: ignore 212
-    return nil
-end
-
-function Database:createNotebook(name, template) -- luacheck: ignore 212
-    -- TODO: INSERT into notebooks table
-    logger.dbg("CozyHome Database: stub createNotebook()", name)
-    return nil
-end
-
-function Database:renameNotebook(id, new_name) -- luacheck: ignore 212
-    return true
-end
-
-function Database:deleteNotebook(id) -- luacheck: ignore 212
-    return true
-end
-
-function Database:getNotebookPages(notebook_id) -- luacheck: ignore 212
-    return {}
-end
-
-function Database:getNotebookPageCount(notebook_id) -- luacheck: ignore 212
-    return 0
-end
-
-function Database:saveStroke(notebook_id, page_num, stroke_data) -- luacheck: ignore 212
-    return true
-end
-
-function Database:getStrokes(notebook_id, page_num) -- luacheck: ignore 212
-    return {}
-end
-
-function Database:deleteStroke(stroke_id) -- luacheck: ignore 212
-    return true
-end
-
-function Database:clearPage(notebook_id, page_num) -- luacheck: ignore 212
-    return true
-end
-
--- ============================================
--- CLASSES (Learning Space)
--- ============================================
-
+--- Get all classes, ordered by sort_order then name.
+-- @return table: array of {id, name, icon, color, created_at, sort_order}
 function Database:getClasses()
-    return {}
+    local conn = ensureConn()
+    if not conn then return {} end
+
+    local classes = {}
+    pcall(function()
+        local stmt = conn:prepare(
+            "SELECT id, name, icon, color, created_at, sort_order "
+            .. "FROM classes ORDER BY sort_order ASC, name ASC"
+        )
+        if stmt then
+            for row in stmt:rows() do
+                table.insert(classes, {
+                    id = tonumber(row[1]),
+                    name = row[2] or "",
+                    icon = row[3],
+                    color = row[4],
+                    created_at = row[5],
+                    sort_order = tonumber(row[6]) or 0,
+                })
+            end
+            stmt:close()
+        end
+    end)
+    return classes
 end
 
-function Database:getClass(id) -- luacheck: ignore 212
-    return nil
+--- Get a single class by ID.
+-- @param id number
+-- @return table or nil
+function Database:getClass(id)
+    local conn = ensureConn()
+    if not conn or not id then return nil end
+
+    local cls = nil
+    pcall(function()
+        local stmt = conn:prepare(
+            "SELECT id, name, icon, color, created_at, sort_order "
+            .. "FROM classes WHERE id = ?"
+        )
+        if stmt then
+            stmt:bind(id)
+            local row = stmt:step()
+            if row then
+                cls = {
+                    id = tonumber(row[1]),
+                    name = row[2] or "",
+                    icon = row[3],
+                    color = row[4],
+                    created_at = row[5],
+                    sort_order = tonumber(row[6]) or 0,
+                }
+            end
+            stmt:close()
+        end
+    end)
+    return cls
 end
 
-function Database:createClass(name, icon, color) -- luacheck: ignore 212
-    logger.dbg("CozyHome Database: stub createClass()", name)
-    return nil
+--- Create a new class.
+-- @param name string
+-- @param icon string (single character)
+-- @param color string or nil
+-- @return number class_id or nil on failure
+function Database:createClass(name, icon, color)
+    local conn = ensureConn()
+    if not conn or not name or name == "" then return nil end
+
+    local class_id = nil
+    local ok, err = pcall(function()
+        local stmt = conn:prepare(
+            "INSERT INTO classes (name, icon, color) VALUES (?, ?, ?)"
+        )
+        if stmt then
+            stmt:bind(name, icon, color)
+            stmt:step()
+            stmt:close()
+        end
+        -- Get the last inserted ID
+        local id_stmt = conn:prepare("SELECT last_insert_rowid()")
+        if id_stmt then
+            local row = id_stmt:step()
+            if row then class_id = tonumber(row[1]) end
+            id_stmt:close()
+        end
+    end)
+    if not ok then
+        logger.warn("CozyHome DB: createClass failed:", err)
+        return nil
+    end
+    return class_id
 end
 
-function Database:renameClass(id, new_name) -- luacheck: ignore 212
+--- Rename a class.
+-- @param id number
+-- @param new_name string
+-- @return boolean success
+function Database:renameClass(id, new_name)
+    local conn = ensureConn()
+    if not conn or not id or not new_name or new_name == "" then return false end
+
+    local ok, err = pcall(function()
+        local stmt = conn:prepare("UPDATE classes SET name = ? WHERE id = ?")
+        if stmt then
+            stmt:bind(new_name, id)
+            stmt:step()
+            stmt:close()
+        end
+    end)
+    if not ok then
+        logger.warn("CozyHome DB: renameClass failed:", err)
+        return false
+    end
     return true
 end
 
-function Database:deleteClass(id) -- luacheck: ignore 212
-    return true
-end
+--- Delete a class and all its associations.
+-- @param id number
+-- @return boolean success
+function Database:deleteClass(id)
+    local conn = ensureConn()
+    if not conn or not id then return false end
 
-function Database:getClassBooks(class_id) -- luacheck: ignore 212
-    return {}
-end
+    local ok, err = pcall(function()
+        -- Delete associations first (in case FOREIGN KEY CASCADE isn't enabled)
+        local stmt1 = conn:prepare("DELETE FROM class_books WHERE class_id = ?")
+        if stmt1 then stmt1:bind(id); stmt1:step(); stmt1:close() end
 
-function Database:addBookToClass(class_id, book_path) -- luacheck: ignore 212
-    return true
-end
+        local stmt2 = conn:prepare("DELETE FROM class_cards WHERE class_id = ?")
+        if stmt2 then stmt2:bind(id); stmt2:step(); stmt2:close() end
 
-function Database:removeBookFromClass(class_id, book_path) -- luacheck: ignore 212
+        local stmt3 = conn:prepare("DELETE FROM class_last_book WHERE class_id = ?")
+        if stmt3 then stmt3:bind(id); stmt3:step(); stmt3:close() end
+
+        local stmt4 = conn:prepare("DELETE FROM classes WHERE id = ?")
+        if stmt4 then stmt4:bind(id); stmt4:step(); stmt4:close() end
+    end)
+    if not ok then
+        logger.warn("CozyHome DB: deleteClass failed:", err)
+        return false
+    end
     return true
 end
 
 -- ============================================
--- FLASHCARDS
+-- CLASS-BOOK ASSOCIATIONS
 -- ============================================
 
-function Database:getCards(filters) -- luacheck: ignore 212
-    return {}
+--- Get all books in a class.
+-- @param class_id number
+-- @return table: array of {book_path, book_title, book_author, added_at}
+function Database:getClassBooks(class_id)
+    local conn = ensureConn()
+    if not conn or not class_id then return {} end
+
+    local books = {}
+    pcall(function()
+        local stmt = conn:prepare(
+            "SELECT book_path, book_title, book_author, added_at "
+            .. "FROM class_books WHERE class_id = ? ORDER BY added_at ASC"
+        )
+        if stmt then
+            stmt:bind(class_id)
+            for row in stmt:rows() do
+                table.insert(books, {
+                    book_path = row[1],
+                    book_title = row[2],
+                    book_author = row[3],
+                    added_at = row[4],
+                })
+            end
+            stmt:close()
+        end
+    end)
+    return books
 end
 
-function Database:getCard(id) -- luacheck: ignore 212
-    return nil
+--- Get the count of books in a class.
+-- @param class_id number
+-- @return number
+function Database:getClassBookCount(class_id)
+    local conn = ensureConn()
+    if not conn or not class_id then return 0 end
+
+    local count = 0
+    pcall(function()
+        local stmt = conn:prepare(
+            "SELECT COUNT(*) FROM class_books WHERE class_id = ?"
+        )
+        if stmt then
+            stmt:bind(class_id)
+            local row = stmt:step()
+            if row then count = tonumber(row[1]) or 0 end
+            stmt:close()
+        end
+    end)
+    return count
 end
 
-function Database:createCard(card_data) -- luacheck: ignore 212
-    logger.dbg("CozyHome Database: stub createCard()")
-    return nil
-end
+--- Add a book to a class.
+-- @param class_id number
+-- @param book_path string
+-- @param book_title string or nil
+-- @param book_author string or nil
+-- @return boolean success
+function Database:addBookToClass(class_id, book_path, book_title, book_author)
+    local conn = ensureConn()
+    if not conn or not class_id or not book_path then return false end
 
-function Database:updateCard(id, updates) -- luacheck: ignore 212
+    local ok, err = pcall(function()
+        local stmt = conn:prepare(
+            "INSERT OR IGNORE INTO class_books (class_id, book_path, book_title, book_author) "
+            .. "VALUES (?, ?, ?, ?)"
+        )
+        if stmt then
+            stmt:bind(class_id, book_path, book_title, book_author)
+            stmt:step()
+            stmt:close()
+        end
+    end)
+    if not ok then
+        logger.warn("CozyHome DB: addBookToClass failed:", err)
+        return false
+    end
     return true
 end
 
-function Database:deleteCard(id) -- luacheck: ignore 212
+--- Remove a book from a class.
+-- @param class_id number
+-- @param book_path string
+-- @return boolean success
+function Database:removeBookFromClass(class_id, book_path)
+    local conn = ensureConn()
+    if not conn or not class_id or not book_path then return false end
+
+    local ok, err = pcall(function()
+        local stmt = conn:prepare(
+            "DELETE FROM class_books WHERE class_id = ? AND book_path = ?"
+        )
+        if stmt then
+            stmt:bind(class_id, book_path)
+            stmt:step()
+            stmt:close()
+        end
+    end)
+    if not ok then
+        logger.warn("CozyHome DB: removeBookFromClass failed:", err)
+        return false
+    end
     return true
 end
 
-function Database:getDueCards(limit) -- luacheck: ignore 212
-    return {}
-end
+--- Check if a book is in a class.
+-- @param class_id number
+-- @param book_path string
+-- @return boolean
+function Database:isBookInClass(class_id, book_path)
+    local conn = ensureConn()
+    if not conn or not class_id or not book_path then return false end
 
-function Database:getCardCount(filters) -- luacheck: ignore 212
-    return 0
-end
-
-function Database:reviewCard(id, quality) -- luacheck: ignore 212
-    return true
+    local found = false
+    pcall(function()
+        local stmt = conn:prepare(
+            "SELECT 1 FROM class_books WHERE class_id = ? AND book_path = ? LIMIT 1"
+        )
+        if stmt then
+            stmt:bind(class_id, book_path)
+            local row = stmt:step()
+            found = (row ~= nil)
+            stmt:close()
+        end
+    end)
+    return found
 end
 
 -- ============================================
--- DECKS
+-- CLASS-CARD LINKS
 -- ============================================
 
-function Database:getDecks()
-    return {}
+--- Get all card IDs linked to a class (extra cards not from class books).
+-- @param class_id number
+-- @return table: array of card ID numbers
+function Database:getClassCardIds(class_id)
+    local conn = ensureConn()
+    if not conn or not class_id then return {} end
+
+    local ids = {}
+    pcall(function()
+        local stmt = conn:prepare(
+            "SELECT card_id FROM class_cards WHERE class_id = ? ORDER BY added_at ASC"
+        )
+        if stmt then
+            stmt:bind(class_id)
+            for row in stmt:rows() do
+                table.insert(ids, tonumber(row[1]))
+            end
+            stmt:close()
+        end
+    end)
+    return ids
 end
 
-function Database:createDeck(name) -- luacheck: ignore 212
-    return nil
-end
+--- Add a card to a class.
+-- @param class_id number
+-- @param card_id number
+-- @return boolean success
+function Database:addCardToClass(class_id, card_id)
+    local conn = ensureConn()
+    if not conn or not class_id or not card_id then return false end
 
-function Database:renameDeck(id, new_name) -- luacheck: ignore 212
+    local ok, err = pcall(function()
+        local stmt = conn:prepare(
+            "INSERT OR IGNORE INTO class_cards (class_id, card_id) VALUES (?, ?)"
+        )
+        if stmt then
+            stmt:bind(class_id, card_id)
+            stmt:step()
+            stmt:close()
+        end
+    end)
+    if not ok then
+        logger.warn("CozyHome DB: addCardToClass failed:", err)
+        return false
+    end
     return true
 end
 
-function Database:deleteDeck(id) -- luacheck: ignore 212
+--- Remove a card from a class.
+-- @param class_id number
+-- @param card_id number
+-- @return boolean success
+function Database:removeCardFromClass(class_id, card_id)
+    local conn = ensureConn()
+    if not conn or not class_id or not card_id then return false end
+
+    local ok, err = pcall(function()
+        local stmt = conn:prepare(
+            "DELETE FROM class_cards WHERE class_id = ? AND card_id = ?"
+        )
+        if stmt then
+            stmt:bind(class_id, card_id)
+            stmt:step()
+            stmt:close()
+        end
+    end)
+    if not ok then
+        logger.warn("CozyHome DB: removeCardFromClass failed:", err)
+        return false
+    end
+    return true
+end
+
+--- Check if a card is linked to a class.
+-- @param class_id number
+-- @param card_id number
+-- @return boolean
+function Database:isCardInClass(class_id, card_id)
+    local conn = ensureConn()
+    if not conn or not class_id or not card_id then return false end
+
+    local found = false
+    pcall(function()
+        local stmt = conn:prepare(
+            "SELECT 1 FROM class_cards WHERE class_id = ? AND card_id = ? LIMIT 1"
+        )
+        if stmt then
+            stmt:bind(class_id, card_id)
+            local row = stmt:step()
+            found = (row ~= nil)
+            stmt:close()
+        end
+    end)
+    return found
+end
+
+-- ============================================
+-- CLASS LAST BOOK (Quick Resume)
+-- ============================================
+
+--- Get the last-opened book path for a class.
+-- @param class_id number
+-- @return string book_path or nil
+function Database:getClassLastBook(class_id)
+    local conn = ensureConn()
+    if not conn or not class_id then return nil end
+
+    local path = nil
+    pcall(function()
+        local stmt = conn:prepare(
+            "SELECT book_path FROM class_last_book WHERE class_id = ?"
+        )
+        if stmt then
+            stmt:bind(class_id)
+            local row = stmt:step()
+            if row then path = row[1] end
+            stmt:close()
+        end
+    end)
+    return path
+end
+
+--- Set the last-opened book path for a class.
+-- @param class_id number
+-- @param book_path string
+-- @return boolean success
+function Database:setClassLastBook(class_id, book_path)
+    local conn = ensureConn()
+    if not conn or not class_id or not book_path then return false end
+
+    local ok, err = pcall(function()
+        local stmt = conn:prepare(
+            "INSERT OR REPLACE INTO class_last_book (class_id, book_path, updated_at) "
+            .. "VALUES (?, ?, datetime('now', 'localtime'))"
+        )
+        if stmt then
+            stmt:bind(class_id, book_path)
+            stmt:step()
+            stmt:close()
+        end
+    end)
+    if not ok then
+        logger.warn("CozyHome DB: setClassLastBook failed:", err)
+        return false
+    end
     return true
 end
 
@@ -205,34 +699,226 @@ end
 -- FOCUS SESSIONS
 -- ============================================
 
-function Database:saveFocusSession(session_data) -- luacheck: ignore 212
+--- Record a completed focus session.
+-- @param session_data table: {book_path, book_title, duration_minutes, pages_read, xp_earned, completed}
+-- @return boolean success
+function Database:addFocusSession(session_data)
+    local conn = ensureConn()
+    if not conn or not session_data then return false end
+
+    local ok, err = pcall(function()
+        local stmt = conn:prepare(
+            "INSERT INTO focus_sessions (book_path, book_title, duration_minutes, pages_read, xp_earned, completed) "
+            .. "VALUES (?, ?, ?, ?, ?, ?)"
+        )
+        if stmt then
+            stmt:bind(
+                session_data.book_path,
+                session_data.book_title,
+                session_data.duration_minutes or 0,
+                session_data.pages_read or 0,
+                session_data.xp_earned or 0,
+                session_data.completed and 1 or 0
+            )
+            stmt:step()
+            stmt:close()
+        end
+    end)
+    if not ok then
+        logger.warn("CozyHome DB: addFocusSession failed:", err)
+        return false
+    end
     return true
 end
 
-function Database:getFocusSessions(limit) -- luacheck: ignore 212
-    return {}
+--- Get aggregate focus session statistics.
+-- @return table: {total_sessions, total_minutes, today_sessions, today_minutes, week_sessions, week_minutes}
+function Database:getFocusSessionStats()
+    local conn = ensureConn()
+    local stats = {
+        total_sessions = 0, total_minutes = 0,
+        today_sessions = 0, today_minutes = 0,
+        week_sessions = 0, week_minutes = 0,
+    }
+    if not conn then return stats end
+
+    pcall(function()
+        -- Ensure table exists
+        conn:exec([[
+            CREATE TABLE IF NOT EXISTS focus_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                book_path TEXT, book_title TEXT,
+                started_at TEXT DEFAULT (datetime('now', 'localtime')),
+                duration_minutes INTEGER NOT NULL,
+                pages_read INTEGER DEFAULT 0,
+                xp_earned INTEGER DEFAULT 0,
+                completed INTEGER DEFAULT 1
+            );
+        ]])
+
+        -- All time
+        local stmt = conn:prepare(
+            "SELECT COUNT(*), COALESCE(SUM(duration_minutes), 0) "
+            .. "FROM focus_sessions WHERE completed = 1"
+        )
+        if stmt then
+            local row = stmt:step()
+            if row then
+                stats.total_sessions = tonumber(row[1]) or 0
+                stats.total_minutes = tonumber(row[2]) or 0
+            end
+            stmt:close()
+        end
+
+        -- Today
+        local stmt2 = conn:prepare(
+            "SELECT COUNT(*), COALESCE(SUM(duration_minutes), 0) "
+            .. "FROM focus_sessions WHERE completed = 1 "
+            .. "AND date(started_at) = date('now', 'localtime')"
+        )
+        if stmt2 then
+            local row = stmt2:step()
+            if row then
+                stats.today_sessions = tonumber(row[1]) or 0
+                stats.today_minutes = tonumber(row[2]) or 0
+            end
+            stmt2:close()
+        end
+
+        -- This week (last 7 days)
+        local stmt3 = conn:prepare(
+            "SELECT COUNT(*), COALESCE(SUM(duration_minutes), 0) "
+            .. "FROM focus_sessions WHERE completed = 1 "
+            .. "AND date(started_at) >= date('now', 'localtime', '-7 days')"
+        )
+        if stmt3 then
+            local row = stmt3:step()
+            if row then
+                stats.week_sessions = tonumber(row[1]) or 0
+                stats.week_minutes = tonumber(row[2]) or 0
+            end
+            stmt3:close()
+        end
+    end)
+    return stats
 end
 
-function Database:getFocusStats()
-    return {
-        total_sessions = 0,
-        total_minutes = 0,
-        current_streak = 0,
-        best_streak = 0,
-        total_xp = 0,
-        level = 1,
-    }
+-- ============================================
+-- FOCUS GAME DATA (XP, level, streak, achievements)
+-- ============================================
+
+--- Load the focus game data JSON blob.
+-- @return table or nil
+function Database:getFocusGameData()
+    local conn = ensureConn()
+    if not conn then return nil end
+
+    local data = nil
+    pcall(function()
+        -- Ensure table exists
+        conn:exec([[
+            CREATE TABLE IF NOT EXISTS focus_game_data (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                data TEXT NOT NULL,
+                updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+        ]])
+
+        local stmt = conn:prepare("SELECT data FROM focus_game_data WHERE id = 1")
+        if stmt then
+            local row = stmt:step()
+            if row and row[1] then
+                -- Decode JSON
+                local json_ok, json_data = pcall(function()
+                    local JSON = require("json")
+                    return JSON.decode(row[1])
+                end)
+                if json_ok and type(json_data) == "table" then
+                    data = json_data
+                end
+            end
+            stmt:close()
+        end
+    end)
+    return data
+end
+
+--- Save the focus game data JSON blob.
+-- @param game_data table
+-- @return boolean success
+function Database:saveFocusGameData(game_data)
+    local conn = ensureConn()
+    if not conn or not game_data then return false end
+
+    local ok, err = pcall(function()
+        local JSON = require("json")
+        local json_str = JSON.encode(game_data)
+
+        local stmt = conn:prepare(
+            "INSERT OR REPLACE INTO focus_game_data (id, data, updated_at) "
+            .. "VALUES (1, ?, datetime('now', 'localtime'))"
+        )
+        if stmt then
+            stmt:bind(json_str)
+            stmt:step()
+            stmt:close()
+        end
+    end)
+    if not ok then
+        logger.warn("CozyHome DB: saveFocusGameData failed:", err)
+        return false
+    end
+    return true
 end
 
 -- ============================================
 -- HIDDEN FOLDERS
 -- ============================================
 
+--- Get list of hidden folder paths.
+-- @return table: array of path strings
 function Database:getHiddenFolders()
-    return {}
+    local conn = ensureConn()
+    if not conn then return {} end
+
+    local folders = {}
+    pcall(function()
+        local stmt = conn:prepare("SELECT path FROM hidden_folders ORDER BY path ASC")
+        if stmt then
+            for row in stmt:rows() do
+                table.insert(folders, row[1])
+            end
+            stmt:close()
+        end
+    end)
+    return folders
 end
 
-function Database:setHiddenFolders(folders) -- luacheck: ignore 212
+--- Set the list of hidden folders (replaces all existing).
+-- @param folders table: array of path strings
+-- @return boolean success
+function Database:setHiddenFolders(folders)
+    local conn = ensureConn()
+    if not conn then return false end
+
+    local ok, err = pcall(function()
+        conn:exec("DELETE FROM hidden_folders")
+        if folders and #folders > 0 then
+            local stmt = conn:prepare("INSERT INTO hidden_folders (path) VALUES (?)")
+            if stmt then
+                for _, path in ipairs(folders) do
+                    stmt:reset()
+                    stmt:bind(path)
+                    stmt:step()
+                end
+                stmt:close()
+            end
+        end
+    end)
+    if not ok then
+        logger.warn("CozyHome DB: setHiddenFolders failed:", err)
+        return false
+    end
     return true
 end
 
@@ -240,8 +926,8 @@ end
 -- CLEANUP
 -- ============================================
 
-function Database:close()
-    logger.dbg("CozyHome Database: stub close()")
-end
+-- Initialize on first require (deferred — tables created on first ensureConn call)
+-- We don't auto-init here because the DB path depends on DataStorage being ready.
+-- Instead, init() is called explicitly by home.lua and settings.lua via Database:open().
 
 return Database

@@ -168,7 +168,7 @@ function CozyHomeScreen:checkFirstRun()
                 .. "· Books — open KOReader file browser\n"
                 .. "· Highlights — browse your highlights\n"
                 .. "· Learn Space — group by subject\n"
-                .. "· Notecards — flashcard review\n"
+                .. "· Flashcards — flashcard review\n"
                 .. "· Settings — customize everything\n\n"
                 .. "Tap any tile to get started.\n"
                 .. "You can hide or rearrange tiles in Settings."),
@@ -647,7 +647,7 @@ function CozyHomeScreen:getTileCallbacks()
         end,
         highlights = nav("highlights"),
         learnspace = nav("learningspace"),
-        notecards  = nav("notecards"),
+        flashcards = nav("flashcards"),
         focus      = nav("focusmode"),
         settings   = nav("settings"),
 

@@ -59,7 +59,7 @@ local CATEGORIES = {
     { key = "homepage",    label = "Homepage",       icon_text = "H", description = "Tiles, layout, stats bar" },
 
     { key = "highlights",  label = "Highlights",     icon_text = "≡", description = "Flashcard creation, display" },
-    { key = "notecards",   label = "Notecards",      icon_text = "C", description = "Review limits, intervals" },
+    { key = "flashcards",   label = "Flashcards",      icon_text = "C", description = "Review limits, intervals" },
     { key = "focus",       label = "Focus",          icon_text = "◉", description = "Timer durations, sessions" },
     { key = "learnspace",  label = "Learning Space", icon_text = "L", description = "Class defaults" },
     { key = "statusbar",   label = "Status Bar",     icon_text = "=", description = "WiFi, Bluetooth visibility" },
@@ -254,7 +254,7 @@ end
 function SettingsScreen:openCategory(key)
     if key == "homepage" then self:openHomepageSettings()
     elseif key == "highlights" then self:openHighlightsSettings()
-    elseif key == "notecards" then self:openNotecardSettings()
+    elseif key == "flashcards" then self:openFlashcardSettings()
     elseif key == "focus" then self:openFocusSettings()
     elseif key == "learnspace" then self:openLearnSpaceSettings()
     elseif key == "statusbar" then self:openStatusBarSettings()
@@ -757,9 +757,9 @@ function SettingsScreen:openLearnSpaceSettings()
     self:showSubScreen(_("Learning Space"), rows)
 end
 
--- ─── Notecard Settings ───
+-- ─── Flashcard Settings ───
 
-function SettingsScreen:openNotecardSettings()
+function SettingsScreen:openFlashcardSettings()
     local settings_screen = self
     local rows = {
         {
@@ -769,7 +769,7 @@ function SettingsScreen:openNotecardSettings()
             callback = function()
                 self:showNumberInput(_("Cards per session"), tonumber(Database:getPref(PREF.cards_per_session, "20")) or 20, 5, 100, function(val)
                     Database:setPref(PREF.cards_per_session, tostring(val))
-                    settings_screen:openNotecardSettings()
+                    settings_screen:openFlashcardSettings()
                 end)
             end,
         },
@@ -780,7 +780,7 @@ function SettingsScreen:openNotecardSettings()
             callback = function()
                 self:showNumberInput(_("New cards per day"), tonumber(Database:getPref(PREF.new_cards_per_day, "10")) or 10, 1, 50, function(val)
                     Database:setPref(PREF.new_cards_per_day, tostring(val))
-                    settings_screen:openNotecardSettings()
+                    settings_screen:openFlashcardSettings()
                 end)
             end,
         },
@@ -790,7 +790,7 @@ function SettingsScreen:openNotecardSettings()
             value_func = function() return Database:getPref(PREF.sr_graduating_interval, "1") .. "d" end,
             callback = function()
                 self:showNumberInput(_("Graduating interval (days)"), tonumber(Database:getPref(PREF.sr_graduating_interval, "1")) or 1, 1, 30, function(val)
-                    Database:setPref(PREF.sr_graduating_interval, tostring(val)); settings_screen:openNotecardSettings()
+                    Database:setPref(PREF.sr_graduating_interval, tostring(val)); settings_screen:openFlashcardSettings()
                 end)
             end,
         },
@@ -799,7 +799,7 @@ function SettingsScreen:openNotecardSettings()
             value_func = function() return Database:getPref(PREF.sr_easy_interval, "4") .. "d" end,
             callback = function()
                 self:showNumberInput(_("Easy interval (days)"), tonumber(Database:getPref(PREF.sr_easy_interval, "4")) or 4, 1, 60, function(val)
-                    Database:setPref(PREF.sr_easy_interval, tostring(val)); settings_screen:openNotecardSettings()
+                    Database:setPref(PREF.sr_easy_interval, tostring(val)); settings_screen:openFlashcardSettings()
                 end)
             end,
         },
@@ -808,7 +808,7 @@ function SettingsScreen:openNotecardSettings()
             value_func = function() return Database:getPref(PREF.sr_starting_ease, "250") .. "%" end,
             callback = function()
                 self:showNumberInput(_("Starting ease (%)"), tonumber(Database:getPref(PREF.sr_starting_ease, "250")) or 250, 130, 300, function(val)
-                    Database:setPref(PREF.sr_starting_ease, tostring(val)); settings_screen:openNotecardSettings()
+                    Database:setPref(PREF.sr_starting_ease, tostring(val)); settings_screen:openFlashcardSettings()
                 end)
             end,
         },
@@ -817,7 +817,7 @@ function SettingsScreen:openNotecardSettings()
             value_func = function() return Database:getPref(PREF.sr_easy_bonus, "130") .. "%" end,
             callback = function()
                 self:showNumberInput(_("Easy bonus (%)"), tonumber(Database:getPref(PREF.sr_easy_bonus, "130")) or 130, 100, 200, function(val)
-                    Database:setPref(PREF.sr_easy_bonus, tostring(val)); settings_screen:openNotecardSettings()
+                    Database:setPref(PREF.sr_easy_bonus, tostring(val)); settings_screen:openFlashcardSettings()
                 end)
             end,
         },
@@ -826,7 +826,7 @@ function SettingsScreen:openNotecardSettings()
             value_func = function() return Database:getPref(PREF.sr_interval_modifier, "100") .. "%" end,
             callback = function()
                 self:showNumberInput(_("Interval modifier (%)"), tonumber(Database:getPref(PREF.sr_interval_modifier, "100")) or 100, 50, 200, function(val)
-                    Database:setPref(PREF.sr_interval_modifier, tostring(val)); settings_screen:openNotecardSettings()
+                    Database:setPref(PREF.sr_interval_modifier, tostring(val)); settings_screen:openFlashcardSettings()
                 end)
             end,
         },
@@ -835,7 +835,7 @@ function SettingsScreen:openNotecardSettings()
             value_func = function() return Database:getPref(PREF.sr_max_interval, "365") .. "d" end,
             callback = function()
                 self:showNumberInput(_("Maximum interval (days)"), tonumber(Database:getPref(PREF.sr_max_interval, "365")) or 365, 30, 3650, function(val)
-                    Database:setPref(PREF.sr_max_interval, tostring(val)); settings_screen:openNotecardSettings()
+                    Database:setPref(PREF.sr_max_interval, tostring(val)); settings_screen:openFlashcardSettings()
                 end)
             end,
         },
@@ -855,13 +855,13 @@ function SettingsScreen:openNotecardSettings()
                         Database:setPref(PREF.sr_interval_modifier, "100")
                         Database:setPref(PREF.sr_max_interval, "365")
                         UIManager:show(InfoMessage:new{ text = _("SR settings reset."), timeout = 2 })
-                        settings_screen:openNotecardSettings()
+                        settings_screen:openFlashcardSettings()
                     end,
                 })
             end,
         },
     }
-    self:showSubScreen(_("Notecards"), rows)
+    self:showSubScreen(_("Flashcards"), rows)
 end
 
 -- ─── Status Bar Settings ───
@@ -948,7 +948,7 @@ function SettingsScreen:openAdvancedSettings()
                         .. "\n\n" .. Config.PLUGIN.description
                         .. "\n\nDesigned for Kobo e-ink devices."
                         .. "\n\nModules: Home, Highlights,"
-                        .. "\nLearn Spaces, Notecards, Focus, Settings",
+                        .. "\nLearn Spaces, Flashcards, Focus, Settings",
                 })
             end,
         },

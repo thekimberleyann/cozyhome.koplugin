@@ -8,7 +8,7 @@
 --
 --   🎀 Description:
 --       Learning Spaces — class/topic organization.
---       Group books, notecards, and highlights
+--       Group books, flashcards, and highlights
 --       by subject. Create named classes, add book
 --       shortcuts, view related cards and highlights.
 --
@@ -892,9 +892,9 @@ ClassDetailScreen = InputContainer:extend{
     ui = nil,
     class_id = nil,
     on_close_callback = nil,
-    current_tab = "books",  -- "books", "notecards", or "highlights"
+    current_tab = "books",  -- "books", "flashcards", or "highlights"
     books_page = 1,
-    notecards_page = 1,
+    flashcards_page = 1,
     highlights_page = 1,
 }
 
@@ -998,7 +998,7 @@ function ClassDetailScreen:buildUI()
     table.insert(items, VerticalSpan:new{ width = 6 })
 
     -- ------------------------------------------
-    -- TAB BAR (Books | Notecards | Highlights)
+    -- TAB BAR (Books | Flashcards | Highlights)
     -- ------------------------------------------
 
     local function tabLabel(tab_key, label)
@@ -1020,14 +1020,14 @@ function ClassDetailScreen:buildUI()
     }
 
     local cards_tab_btn = Button:new{
-        text = tabLabel("notecards", _("Notecards")),
+        text = tabLabel("flashcards", _("Flashcards")),
         callback = function()
-            detail_screen.current_tab = "notecards"
+            detail_screen.current_tab = "flashcards"
             detail_screen:refreshDetail()
         end,
         bordersize = 0,
         text_font_size = 15,
-        text_font_bold = self.current_tab == "notecards",
+        text_font_bold = self.current_tab == "flashcards",
         padding = 4,
         show_parent = self,
     }
@@ -1058,7 +1058,7 @@ function ClassDetailScreen:buildUI()
             padding = 4,
             show_parent = self,
         }
-    elseif self.current_tab == "notecards" then
+    elseif self.current_tab == "flashcards" then
         add_btn = Button:new{
             text = _("+ Link Cards"),
             callback = function()
@@ -1210,8 +1210,8 @@ function ClassDetailScreen:buildUI()
 
     if self.current_tab == "books" then
         self:buildBooksTab(items, screen_w, screen_h, content_w, pad)
-    elseif self.current_tab == "notecards" then
-        self:buildNotecardsTab(items, screen_w, screen_h, content_w, pad)
+    elseif self.current_tab == "flashcards" then
+        self:buildFlashcardsTab(items, screen_w, screen_h, content_w, pad)
     elseif self.current_tab == "highlights" then
         self:buildHighlightsTab(items, screen_w, screen_h, content_w, pad)
     end
@@ -1431,10 +1431,10 @@ function ClassDetailScreen:buildBooksTab(items, screen_w, screen_h, content_w, p
 end
 
 -- ============================================
--- NOTECARDS TAB
+-- FLASHCARDS TAB
 -- ============================================
 
-function ClassDetailScreen:buildNotecardsTab(items, screen_w, screen_h, content_w, pad)
+function ClassDetailScreen:buildFlashcardsTab(items, screen_w, screen_h, content_w, pad)
     local detail_screen = self
 
     -- Get book paths for this class
@@ -1593,15 +1593,15 @@ function ClassDetailScreen:buildNotecardsTab(items, screen_w, screen_h, content_
     end
 
     -- Paginate
-    local row_h = Screen:scaleBySize(Config.UI.row_height_class_notecards)
-    local reserved_h = Screen:scaleBySize(Config.UI.reserved_height_class_notecards)  -- header + tabs + progress + pagination
+    local row_h = Screen:scaleBySize(Config.UI.row_height_class_flashcards)
+    local reserved_h = Screen:scaleBySize(Config.UI.reserved_height_class_flashcards)  -- header + tabs + progress + pagination
     local available_h = screen_h - reserved_h
     local items_per_page = math.max(3, math.floor(available_h / (row_h + 1)))
 
     local total_pages = math.ceil(#active_cards / items_per_page)
-    if self.notecards_page > total_pages then self.notecards_page = total_pages end
-    if self.notecards_page < 1 then self.notecards_page = 1 end
-    local start_idx = (self.notecards_page - 1) * items_per_page + 1
+    if self.flashcards_page > total_pages then self.flashcards_page = total_pages end
+    if self.flashcards_page < 1 then self.flashcards_page = 1 end
+    local start_idx = (self.flashcards_page - 1) * items_per_page + 1
     local end_idx = math.min(start_idx + items_per_page - 1, #active_cards)
 
     for i = start_idx, end_idx do
@@ -1707,23 +1707,23 @@ function ClassDetailScreen:buildNotecardsTab(items, screen_w, screen_h, content_
         table.insert(items, VerticalSpan:new{ width = 8 })
         local prev_btn = Button:new{
             text = _("< Prev"),
-            enabled = self.notecards_page > 1,
+            enabled = self.flashcards_page > 1,
             callback = function()
-                detail_screen.notecards_page = detail_screen.notecards_page - 1
+                detail_screen.flashcards_page = detail_screen.flashcards_page - 1
                 detail_screen:refreshDetail()
             end,
             bordersize = 0, text_font_size = 14, show_parent = self,
         }
         local page_label = TextWidget:new{
             face = Font:getFace("cfont", 14),
-            text = string.format(_("Page %d of %d"), self.notecards_page, total_pages),
+            text = string.format(_("Page %d of %d"), self.flashcards_page, total_pages),
             fgcolor = Blitbuffer.COLOR_DARK_GRAY,
         }
         local next_btn = Button:new{
             text = _("Next >"),
-            enabled = self.notecards_page < total_pages,
+            enabled = self.flashcards_page < total_pages,
             callback = function()
-                detail_screen.notecards_page = detail_screen.notecards_page + 1
+                detail_screen.flashcards_page = detail_screen.flashcards_page + 1
                 detail_screen:refreshDetail()
             end,
             bordersize = 0, text_font_size = 14, show_parent = self,
@@ -2494,7 +2494,7 @@ function ClassDetailScreen:refreshDetail()
     local on_close = self.on_close_callback
     local ui = self.ui
     local bp = self.books_page
-    local ncp = self.notecards_page
+    local fcp = self.flashcards_page
     local hlp = self.highlights_page
 
     UIManager:close(self)
@@ -2505,7 +2505,7 @@ function ClassDetailScreen:refreshDetail()
             current_tab = current_tab,
             on_close_callback = on_close,
             books_page = bp,
-            notecards_page = ncp,
+            flashcards_page = fcp,
             highlights_page = hlp,
         }
         UIManager:show(new_detail)

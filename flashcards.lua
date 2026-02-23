@@ -1,13 +1,13 @@
 -- + ⊹ 🎀 ⋆ 🌙 ⋆ ☆ ⋆ ☀️ ⋆ 🎀 ⊹ +
 --
---   ⊹  File:         notecards.lua
+--   ⊹  File:         flashcards.lua
 --   ⊹  Author:       Kimberley Gonzalez (thekimberleyann)
 --   ⊹  Date:         2026-02-06
 --   ⊹  Modified:     2026-02-10
 --   ⊹  Project:      Cozy Home for KOReader
 --
 --   🎀 Description:
---       Notecards hub with two-tab interface: Stacks
+--       Flashcards hub with two-tab interface: Stacks
 --       (deck tiles) and All Cards (flat list). Reads
 --       from cozy_flashcards.db. Decks live in the
 --       flashcards DB; categories/tags in cozyhome.db.
@@ -87,6 +87,12 @@ function CardDB.openConn()
     if not attr then return nil end
     local ok, conn = pcall(SQ3.open, db_path)
     if not ok then return nil end
+
+    -- Migration: add learning_step column (safe to run multiple times)
+    pcall(function()
+        conn:exec("ALTER TABLE flashcards ADD COLUMN learning_step INTEGER DEFAULT 0;")
+    end)
+
     return conn
 end
 
@@ -179,7 +185,7 @@ function CardDB.getAllDecks()
         stmt:close()
 
         -- Fill counts per deck
-        for _, deck in ipairs(decks) do
+        for __, deck in ipairs(decks) do
             local cs = conn:prepare("SELECT COUNT(*) FROM flashcards WHERE deck_id = ? AND suspended = 0")
             if cs then cs:bind(deck.id); local r = cs:step(); deck.total = (r and tonumber(r[1])) or 0; cs:close() end
 
@@ -275,16 +281,27 @@ function CardDB.moveCardToDeck(card_id, deck_id)
     return success
 end
 
---- Get a page of cards, optionally filtered by book_path or deck_id.
-function CardDB.getCards(page, per_page, book_filter, deck_filter)
+--- Get a page of cards, optionally filtered by book_path, deck_id, or suspended status.
+-- @param page number: 1-based page number
+-- @param per_page number: cards per page
+-- @param book_filter string|nil: filter by book_path
+-- @param deck_filter number|nil: filter by deck_id
+-- @param suspended_filter string|nil: nil = active only, "only" = suspended only
+-- @return cards table, total number
+function CardDB.getCards(page, per_page, book_filter, deck_filter, suspended_filter)
     local cards = {}
     local total = 0
     local conn = CardDB.openConn()
     if not conn then return cards, total end
 
     pcall(function()
-        local where_parts = {"1=1"}
+        local where_parts = {}
         local bind_vals = {}
+        if suspended_filter == "only" then
+            table.insert(where_parts, "suspended = 1")
+        else
+            table.insert(where_parts, "suspended = 0")
+        end
         if book_filter then
             table.insert(where_parts, "book_path = ?")
             table.insert(bind_vals, book_filter)
@@ -293,7 +310,10 @@ function CardDB.getCards(page, per_page, book_filter, deck_filter)
             table.insert(where_parts, "deck_id = ?")
             table.insert(bind_vals, deck_filter)
         end
-        local where = "WHERE " .. table.concat(where_parts, " AND ")
+        local where = ""
+        if #where_parts > 0 then
+            where = "WHERE " .. table.concat(where_parts, " AND ")
+        end
 
         -- Count
         local cs = conn:prepare("SELECT COUNT(*) FROM flashcards " .. where)
@@ -307,7 +327,7 @@ function CardDB.getCards(page, per_page, book_filter, deck_filter)
         -- Fetch page
         local offset = (page - 1) * per_page
         local fetch_vals = {}
-        for _, v in ipairs(bind_vals) do table.insert(fetch_vals, v) end
+        for __, v in ipairs(bind_vals) do table.insert(fetch_vals, v) end
         table.insert(fetch_vals, per_page)
         table.insert(fetch_vals, offset)
 
@@ -383,7 +403,8 @@ function CardDB.getCard(card_id)
         local stmt = conn:prepare(
             "SELECT id, book_path, book_title, front, back, source_text, source_page, "
             .. "source_chapter, state, interval_days, ease_factor, review_count, "
-            .. "correct_count, suspended, next_review, last_reviewed, created_at, tags, deck_id "
+            .. "correct_count, suspended, next_review, last_reviewed, created_at, tags, deck_id, "
+            .. "learning_step "
             .. "FROM flashcards WHERE id = ?"
         )
         if stmt then
@@ -410,6 +431,7 @@ function CardDB.getCard(card_id)
                     created_at = row[17],
                     tags = row[18],
                     deck_id = tonumber(row[19]) or 1,
+                    learning_step = tonumber(row[20]) or 0,
                 }
             end
             stmt:close()
@@ -514,6 +536,38 @@ local function ensureReviewTables(conn)
     end)
 end
 
+--- Get the active scheduling preset.
+-- Reads from G_reader_settings (shared with cozyflashcards plugin).
+-- Falls back to the "relaxed" preset if the setting is missing or invalid.
+-- @return table: the preset definition from Config.SCHEDULING_PRESETS
+local function getSchedulingPreset()
+    local G_reader_settings = require("luasettings"):open(
+        require("datastorage"):getSettingsDir() .. "/settings.reader.lua"
+    )
+    local fc_settings = G_reader_settings:readSetting("cozyflashcards") or {}
+    local key = fc_settings.scheduling_preset or Config.DEFAULT_SCHEDULING_PRESET
+    local preset = Config.SCHEDULING_PRESETS[key]
+    if not preset then
+        preset = Config.SCHEDULING_PRESETS[Config.DEFAULT_SCHEDULING_PRESET]
+    end
+    return preset
+end
+
+--- Format a minute-based interval into a human-readable label.
+-- @param minutes number: interval in minutes
+-- @return string: e.g. "10m", "2h", "4d"
+local function formatInterval(minutes)
+    if minutes < 60 then
+        return tostring(math.floor(minutes)) .. "m"
+    elseif minutes < 1440 then
+        local hours = math.floor(minutes / 60)
+        return tostring(hours) .. "h"
+    else
+        local days = math.floor(minutes / 1440)
+        return tostring(days) .. "d"
+    end
+end
+
 --- Convert conn:exec() result columns into an array of card tables.
 local function rowsToCards(results)
     if not results or not results.id then return {} end
@@ -534,6 +588,7 @@ local function rowsToCards(results)
             next_review = results.next_review[i],
             last_reviewed = results.last_reviewed[i],
             deck_id = results.deck_id and tonumber(results.deck_id[i]) or 1,
+            learning_step = results.learning_step and tonumber(results.learning_step[i]) or 0,
         })
     end
     return cards
@@ -583,7 +638,7 @@ function CardDB.getDueCards(limit, new_card_limit)
                     AND state = 'new' AND (next_review IS NULL OR date(next_review) <= date('now', 'localtime'))
                     ORDER BY created_at ASC LIMIT %d
                 ]], new_limit)
-                for _, c in ipairs(rowsToCards(conn:exec(new_sql))) do
+                for __, c in ipairs(rowsToCards(conn:exec(new_sql))) do
                     table.insert(cards, c)
                 end
             end
@@ -603,7 +658,7 @@ function CardDB.getDueCardsByDecks(deck_ids, limit, new_card_limit)
 
     -- Build safe IN clause
     local id_strs = {}
-    for _, id in ipairs(deck_ids) do
+    for __, id in ipairs(deck_ids) do
         local num = tonumber(id)
         if num then table.insert(id_strs, tostring(math.floor(num))) end
     end
@@ -647,7 +702,7 @@ function CardDB.getDueCardsByDecks(deck_ids, limit, new_card_limit)
                     AND state = 'new' AND (next_review IS NULL OR date(next_review) <= date('now', 'localtime'))
                     ORDER BY created_at ASC LIMIT %d
                 ]], in_clause, new_limit)
-                for _, c in ipairs(rowsToCards(conn:exec(new_sql))) do
+                for __, c in ipairs(rowsToCards(conn:exec(new_sql))) do
                     table.insert(cards, c)
                 end
             end
@@ -678,23 +733,60 @@ function CardDB.recordReview(card_id, rating, time_taken_ms)
         local old_interval = tonumber(card.interval_days) or 0
         local old_ease = tonumber(card.ease_factor) or DEFAULT_EASE
         rating = tonumber(rating) or 0
-        local is_correct = rating >= 3
+        local is_correct = rating >= 2  -- Hard (2) and above count as "not failed"
 
         local new_interval, new_ease, new_state
-        if is_correct then
+        local is_new = (card.state == "new") or ((card.review_count or 0) == 0)
+        if rating >= 3 then
+            -- Good (3) or Easy (5): standard SM-2 progression
             new_ease = old_ease + (0.1 - (5 - rating) * (0.08 + (5 - rating) * 0.02))
             new_ease = math.max(MIN_EASE, tonumber(new_ease) or MIN_EASE)
-            if old_interval == 0 then new_interval = 1
+
+            if is_new then
+                -- Graduating intervals for new cards: Good=1d, Easy=4d
+                if rating == 5 then
+                    new_interval = 4
+                else
+                    new_interval = 1
+                end
+            elseif old_interval == 0 then new_interval = 1
             elseif old_interval == 1 then new_interval = 3
             else new_interval = math.floor(tonumber(old_interval * new_ease) or 1) end
+
+            -- Easy bonus for non-new cards: 1.3× multiplier
+            if rating == 5 and not is_new and new_interval > 1 then
+                new_interval = math.floor(new_interval * 1.3)
+            end
+
+            new_state = "review"
+        elseif rating == 2 then
+            -- Hard: slight ease penalty, shorter interval than Good but still progresses
+            new_ease = math.max(MIN_EASE, tonumber(old_ease - 0.15) or MIN_EASE)
+
+            if is_new then
+                -- New card + Hard: review again tomorrow (same as Good but with ease penalty)
+                new_interval = 1
+            elseif old_interval <= 1 then
+                new_interval = 2
+            else
+                new_interval = math.max(2, math.floor(old_interval * 1.2))
+            end
             new_state = "review"
         else
+            -- Again (0): full reset — review again in 10 minutes
             new_ease = math.max(MIN_EASE, tonumber(old_ease - 0.2) or MIN_EASE)
-            new_interval = 1
+            new_interval = 0
             new_state = (card.state == "review") and "relearning" or "learning"
         end
 
-        local next_review = os.date("%Y-%m-%d", os.time() + (new_interval * 86400))
+        -- For interval=0 (Again), schedule 10 minutes from now
+        -- For interval>=1, schedule that many days out
+        local next_review
+        if new_interval <= 0 then
+            next_review = os.date("%Y-%m-%d %H:%M:%S", os.time() + 600)
+        else
+            next_review = os.date("%Y-%m-%d", os.time() + (new_interval * 86400))
+        end
 
         -- Update card
         local stmt = conn:prepare([[
@@ -759,9 +851,14 @@ function CardDB.createDB()
                 ease_factor REAL DEFAULT 2.5,
                 review_count INTEGER DEFAULT 0, correct_count INTEGER DEFAULT 0,
                 state TEXT DEFAULT 'new', tags TEXT,
-                suspended INTEGER DEFAULT 0, deck_id INTEGER DEFAULT 1
+                suspended INTEGER DEFAULT 0, deck_id INTEGER DEFAULT 1,
+                learning_step INTEGER DEFAULT 0
             );
         ]])
+        -- Migration for existing databases: add learning_step if missing
+        pcall(function()
+            conn:exec("ALTER TABLE flashcards ADD COLUMN learning_step INTEGER DEFAULT 0;")
+        end)
         conn:exec([[
             CREATE TABLE IF NOT EXISTS decks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -802,8 +899,8 @@ end
 -- MODULE
 -- ============================================
 
-local Notecards = {}
-Notecards._hub_instance = nil
+local Flashcards = {}
+Flashcards._hub_instance = nil
 
 -- ============================================
 -- STATUS HELPERS
@@ -826,7 +923,7 @@ end
 -- Shows mastered vs total proportion.
 local function buildProgressBar(deck, bar_w)
     local total = deck.total
-    local bar_chars = math.floor(bar_w / 12)
+    local bar_chars = Config.UI.progress_bar_chars or 12
     if bar_chars < 5 then bar_chars = 5 end
     if bar_chars > 20 then bar_chars = 20 end
 
@@ -1206,20 +1303,47 @@ end
 function CozyStudyScreen:previewIntervals(card)
     local previews = {}
     local ratings = {again = 0, hard = 2, good = 3, easy = 5}
+    local is_new = (card.state == "new") or ((card.review_count or 0) == 0)
     for name, rating in pairs(ratings) do
         local old_interval = card.interval_days or 0
         local old_ease = card.ease_factor or 2.5
         local new_interval
         if rating >= 3 then
+            -- Good (3) or Easy (5): standard SM-2 progression
             local new_ease = old_ease + (0.1 - (5 - rating) * (0.08 + (5 - rating) * 0.02))
             new_ease = math.max(1.3, new_ease)
-            if old_interval == 0 then new_interval = 1
+            if is_new then
+                -- Graduating intervals for new cards: Good=1d, Easy=4d
+                if rating == 5 then
+                    new_interval = 4
+                else
+                    new_interval = 1
+                end
+            elseif old_interval == 0 then new_interval = 1
             elseif old_interval == 1 then new_interval = 3
             else new_interval = math.floor(old_interval * new_ease) end
+            -- Easy bonus for non-new cards: 1.3× multiplier
+            if rating == 5 and not is_new and new_interval > 1 then
+                new_interval = math.floor(new_interval * 1.3)
+            end
+        elseif rating == 2 then
+            -- Hard: slight ease penalty, shorter interval but still progresses
+            if is_new then
+                -- New card + Hard: review again tomorrow
+                new_interval = 1
+            elseif old_interval <= 1 then
+                new_interval = 2
+            else
+                new_interval = math.max(2, math.floor(old_interval * 1.2))
+            end
         else
-            new_interval = 1
+            -- Again: full reset — review again in 10 minutes
+            new_interval = 0
         end
-        local label = new_interval <= 1 and "1d" or (tostring(new_interval) .. "d")
+        local label
+        if new_interval <= 0 then label = "10m"
+        elseif new_interval == 1 then label = "1d"
+        else label = tostring(new_interval) .. "d" end
         previews[name] = {interval = new_interval, label = label}
     end
     return previews
@@ -1283,7 +1407,7 @@ function CozyStudyScreen:onRate(rating)
     if not card then return end
     local time_taken = (os.time() - self.card_start_time) * 1000
     CardDB.recordReview(card.id, rating, time_taken)
-    if rating >= 3 then self.correct = self.correct + 1
+    if rating >= 2 then self.correct = self.correct + 1  -- Hard (2) and above count as correct
     else self.incorrect = self.incorrect + 1 end
     self.current_index = self.current_index + 1
     self:loadNextCard()
@@ -1348,11 +1472,328 @@ function CozyStudyScreen:paintTo(bb, x, y)
 end
 
 -- ============================================
--- NOTECARDS HUB SCREEN
+-- CARD DETAIL SCREEN (full-page view)
+-- ============================================
+-- Shows a single flashcard's front, back, stats,
+-- and action buttons on a full-screen page —
+-- matching the Cozy study screen aesthetic.
+
+local CozyCardDetailScreen = InputContainer:extend{
+    name = "cozy_card_detail_screen",
+    card = nil,          -- card table from CardDB.getCard()
+    on_close = nil,      -- callback when back is tapped
+    on_edit = nil,       -- callback(card_id)
+    on_delete = nil,     -- callback(card_id)
+    on_suspend = nil,    -- callback(card_id)
+    on_move = nil,       -- callback(card_id)
+}
+
+function CozyCardDetailScreen:init()
+    self.dimen = Geom:new{
+        x = 0, y = 0,
+        w = Screen:getWidth(),
+        h = Screen:getHeight(),
+    }
+    self.covers_fullscreen = true
+
+    if Device:hasKeys() then
+        self.key_events.Close = { { Device.input.group.Back } }
+    end
+
+    self:buildUI()
+end
+
+function CozyCardDetailScreen:onShow()
+    UIManager:setDirty(self, function()
+        return "full", self.dimen
+    end)
+    return true
+end
+
+function CozyCardDetailScreen:onCloseWidget()
+    UIManager:setDirty(nil, function()
+        return "full", self.dimen
+    end)
+end
+
+function CozyCardDetailScreen:onClose()
+    UIManager:close(self)
+    if self.on_close then
+        UIManager:nextTick(self.on_close)
+    end
+    return true
+end
+
+function CozyCardDetailScreen:buildUI()
+    local sw = Screen:getWidth()
+    local sh = Screen:getHeight()
+    local content_w = math.floor(sw * 0.85)
+    local card = self.card
+    local detail_screen = self
+
+    local items = {}
+
+    -- ── Header ──
+    table.insert(items, sp(14))
+    table.insert(items, buildReviewHeader(sw, content_w, "Card Detail",
+        function() detail_screen:onClose() end, nil))
+    table.insert(items, sp(4))
+    table.insert(items, buildReviewDots(sw, content_w))
+    table.insert(items, sp(12))
+
+    -- ── Status badge ──
+    local status_text = "○ New"
+    if card.suspended == 1 then status_text = "◦ Suspended"
+    elseif card.state == "learning" or card.state == "relearning" then status_text = "◐ Learning"
+    elseif (card.interval_days or 0) >= 21 then status_text = "● Mastered"
+    elseif card.state == "review" then status_text = "◐ Review"
+    end
+
+    local status_tw = TextWidget:new{
+        face = Font:getFace("cfont", 16),
+        text = status_text,
+        fgcolor = card.suspended == 1 and GRAY or DARK_GRAY,
+    }
+    table.insert(items, CenterContainer:new{
+        dimen = Geom:new{w = sw, h = status_tw:getSize().h + 4},
+        status_tw,
+    })
+    table.insert(items, sp(10))
+
+    -- ── Front card ──
+    table.insert(items, buildReviewSectionDivider(sw, content_w, _("Front")))
+    table.insert(items, sp(6))
+
+    local card_inner_w = content_w - 40
+    local front_text = card.front or _("[empty]")
+    local front_tbw = TextBoxWidget:new{
+        face = Font:getFace("cfont", 20),
+        text = front_text,
+        width = card_inner_w,
+        alignment = "center",
+        height_overflow_show_ellipsis = true,
+    }
+    -- Compute height: at least 60px, at most 25% of screen
+    local front_h = math.min(
+        math.max(front_tbw:getSize().h + 10, Screen:scaleBySize(60)),
+        math.floor(sh * 0.25)
+    )
+    local front_frame = FrameContainer:new{
+        padding = 16, margin = 0,
+        bordersize = 1, radius = 12,
+        color = GRAY, background = WHITE,
+        CenterContainer:new{
+            dimen = Geom:new{w = card_inner_w, h = front_h},
+            front_tbw,
+        },
+    }
+    table.insert(items, CenterContainer:new{
+        dimen = Geom:new{w = sw, h = front_frame:getSize().h},
+        front_frame,
+    })
+    table.insert(items, sp(12))
+
+    -- ── Back card ──
+    table.insert(items, buildReviewSectionDivider(sw, content_w, _("Back")))
+    table.insert(items, sp(6))
+
+    local back_text = card.back or _("[empty]")
+    local back_tbw = TextBoxWidget:new{
+        face = Font:getFace("cfont", 20),
+        text = back_text,
+        width = card_inner_w,
+        alignment = "center",
+        height_overflow_show_ellipsis = true,
+    }
+    local back_h = math.min(
+        math.max(back_tbw:getSize().h + 10, Screen:scaleBySize(60)),
+        math.floor(sh * 0.25)
+    )
+    local back_frame = FrameContainer:new{
+        padding = 16, margin = 0,
+        bordersize = 1, radius = 12,
+        color = GRAY, background = WHITE,
+        CenterContainer:new{
+            dimen = Geom:new{w = card_inner_w, h = back_h},
+            back_tbw,
+        },
+    }
+    table.insert(items, CenterContainer:new{
+        dimen = Geom:new{w = sw, h = back_frame:getSize().h},
+        back_frame,
+    })
+    table.insert(items, sp(14))
+
+    -- ── Stats section ──
+    table.insert(items, buildReviewSectionDivider(sw, content_w, _("Stats")))
+    table.insert(items, sp(8))
+
+    if card.review_count and card.review_count > 0 then
+        table.insert(items, buildReviewStatRow(sw, content_w, _("Reviews"), card.review_count))
+        table.insert(items, sp(4))
+        table.insert(items, buildReviewStatRow(sw, content_w, _("Correct"), card.correct_count or 0))
+        table.insert(items, sp(4))
+        table.insert(items, buildReviewStatRow(sw, content_w, _("Interval"), (card.interval_days or 0) .. "d"))
+        table.insert(items, sp(4))
+        table.insert(items, buildReviewStatRow(sw, content_w, _("Ease"), string.format("%.2f", card.ease_factor or 2.5)))
+        table.insert(items, sp(4))
+    else
+        table.insert(items, CenterContainer:new{
+            dimen = Geom:new{w = sw, h = 24},
+            TextWidget:new{
+                face = Font:getFace("smallinfofont", 14),
+                text = _("Not yet reviewed"),
+                fgcolor = GRAY,
+            },
+        })
+        table.insert(items, sp(4))
+    end
+
+    -- Book info
+    if card.book_title and card.book_title ~= "" then
+        local bt = card.book_title
+        if #bt > 40 then bt = bt:sub(1, 37) .. "..." end
+        table.insert(items, buildReviewStatRow(sw, content_w, _("Book"), bt))
+        table.insert(items, sp(4))
+    end
+
+    -- Deck info
+    local deck_names = CardDB.getDeckNames()
+    local deck_name = deck_names[card.deck_id] or _("General")
+    table.insert(items, buildReviewStatRow(sw, content_w, _("Deck"), deck_name))
+    table.insert(items, sp(4))
+
+    -- Source highlight (if present)
+    if card.source_text and card.source_text ~= "" then
+        table.insert(items, sp(4))
+        local source_preview = card.source_text:gsub("\n", " ")
+        if #source_preview > 80 then source_preview = source_preview:sub(1, 77) .. "..." end
+        local source_tw = TextWidget:new{
+            face = Font:getFace("smallinfofont", 12),
+            text = "📖 " .. source_preview,
+            fgcolor = GRAY,
+            max_width = content_w,
+        }
+        table.insert(items, CenterContainer:new{
+            dimen = Geom:new{w = sw, h = source_tw:getSize().h + 4},
+            source_tw,
+        })
+    end
+
+    table.insert(items, sp(16))
+
+    -- ── Action buttons ──
+    local btn_w = math.floor(content_w * 0.40)
+    local card_id = card.id
+
+    local edit_btn = Button:new{
+        text = _("Edit"),
+        callback = function()
+            UIManager:close(detail_screen)
+            if detail_screen.on_edit then
+                UIManager:nextTick(function() detail_screen.on_edit(card_id) end)
+            end
+        end,
+        width = btn_w, radius = 8, bordersize = 1,
+        text_font_face = "cfont", text_font_size = 16,
+    }
+    local suspend_label = card.suspended == 1 and _("Unsuspend") or _("Suspend")
+    local suspend_btn = Button:new{
+        text = suspend_label,
+        callback = function()
+            UIManager:close(detail_screen)
+            if detail_screen.on_suspend then
+                UIManager:nextTick(function() detail_screen.on_suspend(card_id) end)
+            end
+        end,
+        width = btn_w, radius = 8, bordersize = 1,
+        text_font_face = "cfont", text_font_size = 16,
+    }
+
+    table.insert(items, CenterContainer:new{
+        dimen = Geom:new{w = sw, h = edit_btn:getSize().h + 4},
+        HorizontalGroup:new{
+            align = "center",
+            edit_btn,
+            HorizontalSpan:new{width = 10},
+            suspend_btn,
+        },
+    })
+    table.insert(items, sp(8))
+
+    local move_btn = Button:new{
+        text = _("Move to Deck"),
+        callback = function()
+            UIManager:close(detail_screen)
+            if detail_screen.on_move then
+                UIManager:nextTick(function() detail_screen.on_move(card_id) end)
+            end
+        end,
+        width = btn_w, radius = 8, bordersize = 1,
+        text_font_face = "cfont", text_font_size = 16,
+    }
+    local delete_btn = Button:new{
+        text = _("Delete"),
+        callback = function()
+            UIManager:show(ConfirmBox:new{
+                text = _("Delete this flashcard?\n\nThis cannot be undone."),
+                ok_text = _("Delete"),
+                ok_callback = function()
+                    UIManager:close(detail_screen)
+                    if detail_screen.on_delete then
+                        UIManager:nextTick(function() detail_screen.on_delete(card_id) end)
+                    end
+                end,
+            })
+        end,
+        width = btn_w, radius = 8, bordersize = 1,
+        text_font_face = "cfont", text_font_size = 16,
+    }
+
+    table.insert(items, CenterContainer:new{
+        dimen = Geom:new{w = sw, h = move_btn:getSize().h + 4},
+        HorizontalGroup:new{
+            align = "center",
+            move_btn,
+            HorizontalSpan:new{width = 10},
+            delete_btn,
+        },
+    })
+    table.insert(items, sp(14))
+
+    -- ── Assemble with scroll ──
+    local content = VerticalGroup:new{align = "center"}
+    for __, item in ipairs(items) do
+        table.insert(content, item)
+    end
+
+    local scrollable = ScrollableContainer:new{
+        dimen = Geom:new{w = sw, h = sh},
+        show_parent = self,
+        content,
+    }
+
+    self[1] = FrameContainer:new{
+        dimen = Geom:new{w = sw, h = sh},
+        bordersize = 0, padding = 0,
+        background = WHITE,
+        scrollable,
+    }
+end
+
+function CozyCardDetailScreen:paintTo(bb, x, y)
+    self.dimen.x = x
+    self.dimen.y = y
+    bb:paintRect(x, y, self.dimen.w, self.dimen.h, WHITE)
+    if self[1] then self[1]:paintTo(bb, x, y) end
+end
+
+-- ============================================
+-- FLASHCARDS HUB SCREEN
 -- ============================================
 
-local NotecardsHub = InputContainer:extend{
-    name = "cozy_notecards_hub",
+local FlashcardsHub = InputContainer:extend{
+    name = "cozy_flashcards_hub",
     ui = nil,
     on_close_callback = nil,
     active_tab = TAB_STACKS,
@@ -1365,9 +1806,10 @@ local NotecardsHub = InputContainer:extend{
     book_filter_title = nil,
     deck_filter = nil,         -- filter card list by deck
     deck_filter_name = nil,
+    suspended_filter = nil,    -- nil = active only, "only" = suspended only
 }
 
-function NotecardsHub:init()
+function FlashcardsHub:init()
     self.dimen = Geom:new{
         x = 0, y = 0,
         w = Screen:getWidth(),
@@ -1379,25 +1821,25 @@ function NotecardsHub:init()
         self.key_events.Close = { { Device.input.group.Back } }
     end
 
-    Notecards._hub_instance = self
+    Flashcards._hub_instance = self
     self:buildUI()
 end
 
-function NotecardsHub:onShow()
+function FlashcardsHub:onShow()
     UIManager:setDirty(self, function()
         return "full", self.dimen
     end)
     return true
 end
 
-function NotecardsHub:onCloseWidget()
-    Notecards._hub_instance = nil
+function FlashcardsHub:onCloseWidget()
+    Flashcards._hub_instance = nil
     UIManager:setDirty(nil, function()
         return "full", self.dimen
     end)
 end
 
-function NotecardsHub:onClose()
+function FlashcardsHub:onClose()
     UIManager:close(self)
     if self.on_close_callback then
         UIManager:nextTick(self.on_close_callback)
@@ -1409,7 +1851,7 @@ end
 -- HUB UI
 -- ============================================
 
-function NotecardsHub:buildUI()
+function FlashcardsHub:buildUI()
     local sw = Screen:getWidth()
     local sh = Screen:getHeight()
     local pad = Config.UI.content_padding
@@ -1428,7 +1870,7 @@ function NotecardsHub:buildUI()
     -- ── HEADER ──
     table.insert(items, CozyUI.buildScreenHeader({
         sw = sw,
-        title = "Notecards",
+        title = "Flashcards",
         back_callback = function() hub:onClose() end,
         exit_callback = function() hub:onClose() end,
         show_parent = self,
@@ -1531,7 +1973,7 @@ end
 -- STACKS TAB
 -- ============================================
 
-function NotecardsHub:buildStacksTab(items, sw, sh, content_w, pad)
+function FlashcardsHub:buildStacksTab(items, sw, sh, content_w, pad)
     local hub = self
     local decks = CardDB.getAllDecks()
 
@@ -1548,7 +1990,7 @@ function NotecardsHub:buildStacksTab(items, sw, sh, content_w, pad)
     else
         local progress_bar_w = math.floor(content_w * 0.45)
 
-        for _, deck in ipairs(decks) do
+        for __, deck in ipairs(decks) do
             local deck_id = deck.id
             local is_selected = self.selected_decks[deck_id] == true
 
@@ -1816,7 +2258,7 @@ end
 -- ALL CARDS TAB
 -- ============================================
 
-function NotecardsHub:buildAllCardsTab(items, sw, sh, content_w, pad)
+function FlashcardsHub:buildAllCardsTab(items, sw, sh, content_w, pad)
     local hub = self
 
     -- Filter bar: Book filter + Deck filter
@@ -1845,6 +2287,36 @@ function NotecardsHub:buildAllCardsTab(items, sw, sh, content_w, pad)
         show_parent = self,
     }
 
+    -- Suspended filter button
+    local susp_count = CardDB.getCounts().suspended
+    local susp_label
+    if self.suspended_filter == "only" then
+        susp_label = string.format(_("✦ Susp (%d)"), susp_count)
+    else
+        susp_label = string.format(_("Susp (%d)"), susp_count)
+    end
+    local susp_btn = Button:new{
+        text = susp_label,
+        callback = function()
+            if hub.suspended_filter == "only" then
+                hub.suspended_filter = nil
+            else
+                hub.suspended_filter = "only"
+                -- Clear other filters when viewing suspended
+                hub.deck_filter = nil
+                hub.deck_filter_name = nil
+                hub.book_filter = nil
+                hub.book_filter_title = nil
+            end
+            hub.current_page = 1
+            hub:refresh()
+        end,
+        bordersize = self.suspended_filter == "only" and 2 or 0,
+        text_font_size = 14,
+        padding = 4,
+        show_parent = self,
+    }
+
     -- + New Card button
     local new_btn = Button:new{
         text = _("+ New"),
@@ -1860,6 +2332,8 @@ function NotecardsHub:buildAllCardsTab(items, sw, sh, content_w, pad)
         deck_btn,
         HorizontalSpan:new{ width = 8 },
         book_btn,
+        HorizontalSpan:new{ width = 8 },
+        susp_btn,
     }
     local filters_w = left_filters:getSize().w
     local new_btn_w = new_btn:getSize().w
@@ -1892,14 +2366,15 @@ function NotecardsHub:buildAllCardsTab(items, sw, sh, content_w, pad)
     local items_per_page = math.max(3, math.floor(available_h / (row_h + 1)))
 
     local cards, total_count = CardDB.getCards(
-        self.current_page, items_per_page, self.book_filter, self.deck_filter
+        self.current_page, items_per_page, self.book_filter, self.deck_filter, self.suspended_filter
     )
 
     if total_count == 0 then
         table.insert(items, VerticalSpan:new{ width = math.floor(sh * 0.06) })
         local empty_msg = _("No flashcards")
-        if self.deck_filter then empty_msg = _("No cards in this deck") end
-        if self.book_filter then empty_msg = _("No cards for this book") end
+        if self.suspended_filter == "only" then empty_msg = _("No suspended cards")
+        elseif self.deck_filter then empty_msg = _("No cards in this deck")
+        elseif self.book_filter then empty_msg = _("No cards for this book") end
         table.insert(items, CenterContainer:new{
             dimen = Geom:new{ w = sw, h = 30 },
             TextWidget:new{
@@ -2057,12 +2532,12 @@ end
 -- NO DATABASE UI
 -- ============================================
 
-function NotecardsHub:buildNoDbUI(items, sw, sh, content_w, pad)
+function FlashcardsHub:buildNoDbUI(items, sw, sh, content_w, pad)
     local hub = self
 
     table.insert(items, CozyUI.buildScreenHeader({
         sw = sw,
-        title = "Notecards",
+        title = "Flashcards",
         back_callback = function() hub:onClose() end,
         exit_callback = function() hub:onClose() end,
         show_parent = self,
@@ -2100,8 +2575,8 @@ function NotecardsHub:buildNoDbUI(items, sw, sh, content_w, pad)
             CardDB.createDB()
             hub:refresh()
             UIManager:nextTick(function()
-                if Notecards._hub_instance then
-                    Notecards._hub_instance:showStandaloneCreateDialog()
+                if Flashcards._hub_instance then
+                    Flashcards._hub_instance:showStandaloneCreateDialog()
                 end
             end)
         end,
@@ -2123,9 +2598,9 @@ end
 -- ASSEMBLY
 -- ============================================
 
-function NotecardsHub:assembleUI(items, sw, sh)
+function FlashcardsHub:assembleUI(items, sw, sh)
     local content = VerticalGroup:new{ align = "center" }
-    for _, item in ipairs(items) do
+    for __, item in ipairs(items) do
         table.insert(content, item)
     end
 
@@ -2147,7 +2622,7 @@ end
 -- REFRESH
 -- ============================================
 
-function NotecardsHub:refresh()
+function FlashcardsHub:refresh()
     local state = {
         ui = self.ui,
         on_close_callback = self.on_close_callback,
@@ -2159,11 +2634,12 @@ function NotecardsHub:refresh()
         book_filter_title = self.book_filter_title,
         deck_filter = self.deck_filter,
         deck_filter_name = self.deck_filter_name,
+        suspended_filter = self.suspended_filter,
     }
 
     UIManager:close(self)
     UIManager:nextTick(function()
-        local new_hub = NotecardsHub:new(state)
+        local new_hub = FlashcardsHub:new(state)
         UIManager:show(new_hub)
     end)
 end
@@ -2173,14 +2649,14 @@ end
 -- ============================================
 
 --- Common callback after a review session finishes.
-function NotecardsHub:onReviewDone()
+function FlashcardsHub:onReviewDone()
     self.select_mode = false
     self.selected_decks = {}
     self:refresh()
 end
 
 --- Launch a review session with all due cards.
-function NotecardsHub:launchReview()
+function FlashcardsHub:launchReview()
     local due_cards = CardDB.getDueCards(100)
     if #due_cards == 0 then
         UIManager:show(InfoMessage:new{
@@ -2196,14 +2672,14 @@ function NotecardsHub:launchReview()
         UIManager:show(CozyStudyScreen:new{
             cards = due_cards,
             on_session_complete = function()
-                Notecards.show(hub.ui, hub.on_close_callback)
+                Flashcards.show(hub.ui, hub.on_close_callback)
             end,
         })
     end)
 end
 
 --- Launch a review session for selected decks.
-function NotecardsHub:launchReviewSelectedDecks()
+function FlashcardsHub:launchReviewSelectedDecks()
     local deck_ids = {}
     for id in pairs(self.selected_decks) do
         table.insert(deck_ids, id)
@@ -2229,14 +2705,14 @@ function NotecardsHub:launchReviewSelectedDecks()
         UIManager:show(CozyStudyScreen:new{
             cards = due_cards,
             on_session_complete = function()
-                Notecards.show(hub.ui, hub.on_close_callback)
+                Flashcards.show(hub.ui, hub.on_close_callback)
             end,
         })
     end)
 end
 
 --- Launch review for a single deck (called from deck actions dialog).
-function NotecardsHub:launchReviewForDeck(deck_id)
+function FlashcardsHub:launchReviewForDeck(deck_id)
     local due_cards = CardDB.getDueCardsByDecks({deck_id}, 100)
     if #due_cards == 0 then
         UIManager:show(InfoMessage:new{
@@ -2252,7 +2728,7 @@ function NotecardsHub:launchReviewForDeck(deck_id)
         UIManager:show(CozyStudyScreen:new{
             cards = due_cards,
             on_session_complete = function()
-                Notecards.show(hub.ui, hub.on_close_callback)
+                Flashcards.show(hub.ui, hub.on_close_callback)
             end,
         })
     end)
@@ -2262,7 +2738,7 @@ end
 -- DECK MANAGEMENT
 -- ============================================
 
-function NotecardsHub:showCreateDeckDialog()
+function FlashcardsHub:showCreateDeckDialog()
     local hub = self
     local dialog
     dialog = InputDialog:new{
@@ -2282,7 +2758,8 @@ function NotecardsHub:showCreateDeckDialog()
                     callback = function()
                         local name = dialog:getInputText()
                         UIManager:close(dialog)
-                        if name and name ~= "" then
+                        name = CozyUI.sanitizeInput(name, 100)
+                        if name ~= "" then
                             local id = CardDB.createDeck(name, nil)
                             if id then
                                 UIManager:show(InfoMessage:new{
@@ -2301,7 +2778,7 @@ function NotecardsHub:showCreateDeckDialog()
     dialog:onShowKeyboard()
 end
 
-function NotecardsHub:showDeckActions(deck_id, deck_name)
+function FlashcardsHub:showDeckActions(deck_id, deck_name)
     local hub = self
     local is_general = deck_id == 1
 
@@ -2338,7 +2815,14 @@ function NotecardsHub:showDeckActions(deck_id, deck_name)
                         ),
                         ok_text = _("Delete"),
                         ok_callback = function()
-                            CardDB.deleteDeck(deck_id)
+                            local ok = CardDB.deleteDeck(deck_id)
+                            if not ok then
+                                UIManager:show(InfoMessage:new{
+                                    text = _("Failed to delete deck."),
+                                    timeout = 3,
+                                })
+                                return
+                            end
                             if hub.selected_decks[deck_id] then
                                 hub.selected_decks[deck_id] = nil
                             end
@@ -2363,7 +2847,7 @@ function NotecardsHub:showDeckActions(deck_id, deck_name)
     UIManager:show(hub._deck_dialog)
 end
 
-function NotecardsHub:showRenameDeckDialog(deck_id, old_name)
+function FlashcardsHub:showRenameDeckDialog(deck_id, old_name)
     local hub = self
     local dialog
     dialog = InputDialog:new{
@@ -2380,10 +2864,18 @@ function NotecardsHub:showRenameDeckDialog(deck_id, old_name)
                     text = _("Rename"),
                     is_enter_default = true,
                     callback = function()
-                        local new_name = dialog:getInputText()
+                        local raw_name = dialog:getInputText()
                         UIManager:close(dialog)
-                        if new_name and new_name ~= "" then
-                            CardDB.renameDeck(deck_id, new_name)
+                        local new_name = CozyUI.sanitizeInput(raw_name, 100)
+                        if new_name ~= "" then
+                            local ok = CardDB.renameDeck(deck_id, new_name)
+                            if not ok then
+                                UIManager:show(InfoMessage:new{
+                                    text = _("Failed to rename deck."),
+                                    timeout = 3,
+                                })
+                                return
+                            end
                             if hub.deck_filter == deck_id then
                                 hub.deck_filter_name = new_name
                             end
@@ -2402,7 +2894,7 @@ end
 -- FILTER MENUS
 -- ============================================
 
-function NotecardsHub:showDeckFilterMenu()
+function FlashcardsHub:showDeckFilterMenu()
     local hub = self
     local decks = CardDB.getAllDecks()
     local button_rows = {}
@@ -2414,13 +2906,14 @@ function NotecardsHub:showDeckFilterMenu()
                 UIManager:close(hub._deck_filter_dialog)
                 hub.deck_filter = nil
                 hub.deck_filter_name = nil
+                hub.suspended_filter = nil
                 hub.current_page = 1
                 hub:refresh()
             end,
         },
     })
 
-    for _, deck in ipairs(decks) do
+    for __, deck in ipairs(decks) do
         local label = deck.name .. " (" .. deck.total .. ")"
         if #label > 35 then label = label:sub(1, 32) .. "..." end
         local is_active = hub.deck_filter == deck.id
@@ -2435,6 +2928,7 @@ function NotecardsHub:showDeckFilterMenu()
                     UIManager:close(hub._deck_filter_dialog)
                     hub.deck_filter = did
                     hub.deck_filter_name = dname
+                    hub.suspended_filter = nil
                     hub.current_page = 1
                     hub:refresh()
                 end,
@@ -2453,7 +2947,7 @@ function NotecardsHub:showDeckFilterMenu()
     UIManager:show(hub._deck_filter_dialog)
 end
 
-function NotecardsHub:showBookFilterMenu()
+function FlashcardsHub:showBookFilterMenu()
     local hub = self
     local button_rows = {}
 
@@ -2464,6 +2958,7 @@ function NotecardsHub:showBookFilterMenu()
                 UIManager:close(hub._book_filter_dialog)
                 hub.book_filter = nil
                 hub.book_filter_title = nil
+                hub.suspended_filter = nil
                 hub.current_page = 1
                 hub:refresh()
             end,
@@ -2471,7 +2966,7 @@ function NotecardsHub:showBookFilterMenu()
     })
 
     local books = CardDB.getBooksWithCards()
-    for _, book in ipairs(books) do
+    for __, book in ipairs(books) do
         local label = book.book_title
         if #label > 35 then label = label:sub(1, 32) .. "..." end
         label = label .. " (" .. book.card_count .. ")"
@@ -2485,6 +2980,7 @@ function NotecardsHub:showBookFilterMenu()
                     UIManager:close(hub._book_filter_dialog)
                     hub.book_filter = book.book_path
                     hub.book_filter_title = book.book_title
+                    hub.suspended_filter = nil
                     hub.current_page = 1
                     hub:refresh()
                 end,
@@ -2507,7 +3003,7 @@ end
 -- CARD CREATION
 -- ============================================
 
-function NotecardsHub:showStandaloneCreateDialog()
+function FlashcardsHub:showStandaloneCreateDialog()
     local hub = self
     local dialog
     dialog = InputDialog:new{
@@ -2539,7 +3035,7 @@ function NotecardsHub:showStandaloneCreateDialog()
     dialog:onShowKeyboard()
 end
 
-function NotecardsHub:showStandaloneBackDialog(front_text)
+function FlashcardsHub:showStandaloneBackDialog(front_text)
     local hub = self
     local dialog
     dialog = InputDialog:new{
@@ -2573,7 +3069,7 @@ function NotecardsHub:showStandaloneBackDialog(front_text)
     dialog:onShowKeyboard()
 end
 
-function NotecardsHub:saveNewCard(front, back)
+function FlashcardsHub:saveNewCard(front, back)
     local hub = self
     local conn = CardDB.openConn()
     if not conn then
@@ -2599,56 +3095,65 @@ end
 -- CARD DETAIL & ACTIONS
 -- ============================================
 
-function NotecardsHub:showCardDetail(card_id)
+function FlashcardsHub:showCardDetail(card_id)
     local card = CardDB.getCard(card_id)
     if not card then
         UIManager:show(InfoMessage:new{ text = _("Card not found."), timeout = 2 })
         return
     end
 
-    local parts = {}
-    table.insert(parts, "── ✦ Front ✦ ──")
-    table.insert(parts, card.front or "[empty]")
-    table.insert(parts, "")
-    table.insert(parts, "── ✦ Back ✦ ──")
-    table.insert(parts, card.back or "[empty]")
-    table.insert(parts, "")
-    table.insert(parts, "── ✦ Stats ✦ ──")
-
-    local status = "○ New"
-    if card.suspended == 1 then status = "◦ Suspended"
-    elseif card.state == "learning" or card.state == "relearning" then status = "◐ Learning"
-    elseif (card.interval_days or 0) >= 21 then status = "● Mastered"
-    elseif card.state == "review" then status = "◐ Review"
-    end
-    table.insert(parts, "Status: " .. status)
-
-    if card.review_count > 0 then
-        table.insert(parts, string.format(
-            "Reviews: %d · Correct: %d · Interval: %dd",
-            card.review_count, card.correct_count, card.interval_days
-        ))
-    end
-    if card.book_title then
-        local bt = card.book_title
-        if #bt > 40 then bt = bt:sub(1, 37) .. "..." end
-        table.insert(parts, "Book: " .. bt)
-    end
-
-    -- Show deck name
-    local decks = CardDB.getAllDecks()
-    for _, d in ipairs(decks) do
-        if d.id == card.deck_id then
-            table.insert(parts, "Deck: " .. d.name)
-            break
-        end
-    end
-
-    UIManager:show(InfoMessage:new{ text = table.concat(parts, "\n") })
+    local hub = self
+    UIManager:close(self)
+    UIManager:nextTick(function()
+        UIManager:show(CozyCardDetailScreen:new{
+            card = card,
+            on_close = function()
+                Flashcards.show(hub.ui, hub.on_close_callback)
+            end,
+            on_edit = function(cid)
+                -- Re-open hub then trigger edit
+                local new_hub_cb
+                new_hub_cb = function()
+                    if Flashcards._hub_instance then
+                        Flashcards._hub_instance:showEditCard(cid)
+                    end
+                end
+                Flashcards.show(hub.ui, hub.on_close_callback)
+                UIManager:nextTick(new_hub_cb)
+            end,
+            on_delete = function(cid)
+                CardDB.deleteCard(cid)
+                Flashcards.show(hub.ui, hub.on_close_callback)
+            end,
+            on_suspend = function(cid)
+                CardDB.toggleSuspend(cid)
+                -- Re-open detail with refreshed card
+                local refreshed = CardDB.getCard(cid)
+                if refreshed then
+                    UIManager:show(CozyCardDetailScreen:new{
+                        card = refreshed,
+                        on_close = function()
+                            Flashcards.show(hub.ui, hub.on_close_callback)
+                        end,
+                    })
+                else
+                    Flashcards.show(hub.ui, hub.on_close_callback)
+                end
+            end,
+            on_move = function(cid)
+                Flashcards.show(hub.ui, hub.on_close_callback)
+                UIManager:nextTick(function()
+                    if Flashcards._hub_instance then
+                        Flashcards._hub_instance:showMoveToDeckMenu(cid)
+                    end
+                end)
+            end,
+        })
+    end)
 end
 
 --- Edit a card's front and back text.
-function NotecardsHub:showEditCard(card_id)
+function FlashcardsHub:showEditCard(card_id)
     local hub = self
     local card = CardDB.getCard(card_id)
     if not card then
@@ -2758,7 +3263,7 @@ function NotecardsHub:showEditCard(card_id)
     front_dialog:onShowKeyboard()
 end
 
-function NotecardsHub:showCardActions(card_id)
+function FlashcardsHub:showCardActions(card_id)
     local hub = self
     local card = CardDB.getCard(card_id)
     if not card then return end
@@ -2784,7 +3289,10 @@ function NotecardsHub:showCardActions(card_id)
                     text = _("View Details"),
                     callback = function()
                         UIManager:close(dialog)
-                        hub:showCardDetail(card_id)
+                        -- Use nextTick to allow the dialog to close first
+                        UIManager:nextTick(function()
+                            hub:showCardDetail(card_id)
+                        end)
                     end,
                 },
             },
@@ -2816,7 +3324,13 @@ function NotecardsHub:showCardActions(card_id)
                             text = _("Delete this flashcard?\n\nThis cannot be undone."),
                             ok_text = _("Delete"),
                             ok_callback = function()
-                                CardDB.deleteCard(card_id)
+                                local ok = CardDB.deleteCard(card_id)
+                                if not ok then
+                                    UIManager:show(InfoMessage:new{
+                                        text = _("Failed to delete card."),
+                                        timeout = 3,
+                                    })
+                                end
                                 hub:refresh()
                             end,
                         })
@@ -2831,14 +3345,14 @@ function NotecardsHub:showCardActions(card_id)
     UIManager:show(dialog)
 end
 
-function NotecardsHub:showMoveToDeckMenu(card_id)
+function FlashcardsHub:showMoveToDeckMenu(card_id)
     local hub = self
     local decks = CardDB.getAllDecks()
     local card = CardDB.getCard(card_id)
     local current_deck = card and card.deck_id or 1
     local button_rows = {}
 
-    for _, deck in ipairs(decks) do
+    for __, deck in ipairs(decks) do
         local is_current = deck.id == current_deck
         local prefix = is_current and "● " or "○ "
         local did = deck.id
@@ -2874,7 +3388,7 @@ end
 -- ANKI EXPORT
 -- ============================================
 
-function NotecardsHub:showExportMenu()
+function FlashcardsHub:showExportMenu()
     local hub = self
     local counts = CardDB.getCounts()
 
@@ -2898,6 +3412,15 @@ function NotecardsHub:showExportMenu()
         },
         {
             {
+                text = _("Export by Deck"),
+                callback = function()
+                    UIManager:close(hub._export_dialog)
+                    hub:showExportByDeckMenu()
+                end,
+            },
+        },
+        {
+            {
                 text = _("Export by Book"),
                 callback = function()
                     UIManager:close(hub._export_dialog)
@@ -2907,10 +3430,10 @@ function NotecardsHub:showExportMenu()
         },
         {
             {
-                text = _("Export by Deck"),
+                text = _("Export Current Book"),
                 callback = function()
                     UIManager:close(hub._export_dialog)
-                    hub:showExportByDeckMenu()
+                    hub:exportCurrentBook()
                 end,
             },
         },
@@ -2926,7 +3449,7 @@ function NotecardsHub:showExportMenu()
     UIManager:show(hub._export_dialog)
 end
 
-function NotecardsHub:doExportAll()
+function FlashcardsHub:doExportAll()
     local AnkiExport = require("lib/anki_export")
 
     UIManager:show(InfoMessage:new{ text = _("Exporting all cards..."), timeout = 1 })
@@ -2947,7 +3470,7 @@ function NotecardsHub:doExportAll()
     end)
 end
 
-function NotecardsHub:showExportByBookMenu()
+function FlashcardsHub:showExportByBookMenu()
     local hub = self
     local AnkiExport = require("lib/anki_export")
     local books = AnkiExport.getBooksWithCards()
@@ -2958,7 +3481,7 @@ function NotecardsHub:showExportByBookMenu()
     end
 
     local button_rows = {}
-    for _, book in ipairs(books) do
+    for __, book in ipairs(books) do
         local label = (book.book_title or "Unknown")
         if #label > 35 then label = label:sub(1, 32) .. "..." end
         label = label .. string.format(" (%d)", book.card_count)
@@ -3000,7 +3523,7 @@ function NotecardsHub:showExportByBookMenu()
     UIManager:show(hub._book_export_dialog)
 end
 
-function NotecardsHub:showExportByDeckMenu()
+function FlashcardsHub:showExportByDeckMenu()
     local hub = self
     local AnkiExport = require("lib/anki_export")
     local decks = CardDB.getAllDecks()
@@ -3011,7 +3534,7 @@ function NotecardsHub:showExportByDeckMenu()
     end
 
     local button_rows = {}
-    for _, deck in ipairs(decks) do
+    for __, deck in ipairs(decks) do
         local label = deck.name .. string.format(" (%d)", deck.total)
         local did = deck.id
         local dname = deck.name
@@ -3051,32 +3574,68 @@ function NotecardsHub:showExportByDeckMenu()
     UIManager:show(hub._deck_export_dialog)
 end
 
+function FlashcardsHub:exportCurrentBook()
+    if not self.ui or not self.ui.document then
+        UIManager:show(InfoMessage:new{
+            text = _("No book is currently open."),
+            timeout = 2,
+        })
+        return
+    end
+
+    local AnkiExport = require("lib/anki_export")
+    local book_path = self.ui.document.file
+    local props = self.ui.document:getProps()
+    local book_title = props.title or book_path:match("([^/]+)%..+$") or "Unknown"
+
+    UIManager:show(InfoMessage:new{ text = _("Exporting..."), timeout = 1 })
+    UIManager:nextTick(function()
+        local ok, path_or_err, count = AnkiExport.exportByBook(book_path, book_title)
+        if ok then
+            UIManager:show(InfoMessage:new{
+                text = string.format("Exported %d cards!\n\n%s", count, path_or_err),
+                timeout = 8,
+            })
+        else
+            UIManager:show(InfoMessage:new{
+                text = _("Export failed: ") .. tostring(path_or_err),
+                timeout = 5,
+            })
+        end
+    end)
+end
+
 -- ============================================
 -- ANKI IMPORT
 -- ============================================
 
-function NotecardsHub:showImportMenu()
+function FlashcardsHub:showImportMenu()
     local hub = self
     local AnkiImport = require("lib/anki_import")
+    local import_dir = AnkiImport.getImportDir()
     local files = AnkiImport.listApkgFiles()
 
     if #files == 0 then
         UIManager:show(InfoMessage:new{
-            text = _("No .apkg files found.\n\n"
-                .. "Place .apkg files in:\n"
-                .. "  /mnt/onboard/\n"
-                .. "  /mnt/onboard/imports/\n"
-                .. "  /mnt/onboard/Anki/"),
+            text = string.format(_("No .apkg files found.\n\nPlace Anki export files in:\n%s\n\nOr in:\n  /mnt/onboard/\n  /mnt/onboard/imports/\n  /mnt/onboard/Anki/"), import_dir),
             timeout = 8,
         })
         return
     end
 
     local button_rows = {}
-    for _, f in ipairs(files) do
+    for __, f in ipairs(files) do
         local label = f.filename
         if #label > 35 then label = label:sub(1, 32) .. "..." end
-        label = label .. string.format(" (%d KB)", f.size_kb)
+        local size_str = ""
+        if f.size_kb then
+            if f.size_kb > 1024 then
+                size_str = string.format(" (%.1f MB)", f.size_kb / 1024)
+            else
+                size_str = string.format(" (%d KB)", f.size_kb)
+            end
+        end
+        label = label .. size_str
         local fpath = f.path
 
         table.insert(button_rows, {
@@ -3084,7 +3643,7 @@ function NotecardsHub:showImportMenu()
                 text = label,
                 callback = function()
                     UIManager:close(hub._import_dialog)
-                    hub:confirmImport(fpath, f.filename)
+                    hub:confirmImport({ path = fpath, filename = f.filename })
                 end,
             },
         })
@@ -3101,41 +3660,136 @@ function NotecardsHub:showImportMenu()
     UIManager:show(hub._import_dialog)
 end
 
-function NotecardsHub:confirmImport(apkg_path, display_name)
+function FlashcardsHub:confirmImport(file)
     local hub = self
     local AnkiImport = require("lib/anki_import")
 
     -- Try to get file info first
-    local info = AnkiImport.getApkgInfo(apkg_path)
-    local detail = ""
+    local info = AnkiImport.getApkgInfo(file.path)
+    local info_text = file.filename .. "\n\n"
     if info then
-        detail = string.format("%d cards, %d notes", info.card_count, info.note_count)
-        if #info.decks > 0 then
-            detail = detail .. "\nDecks: " .. table.concat(info.decks, ", ")
+        info_text = info_text .. string.format("Cards: %d\nNotes: %d\n", info.card_count or 0, info.note_count or 0)
+        if info.decks and #info.decks > 0 then
+            info_text = info_text .. "\nDecks:\n"
+            for i, deck in ipairs(info.decks) do
+                if i <= 5 then
+                    info_text = info_text .. "  · " .. deck .. "\n"
+                elseif i == 6 then
+                    info_text = info_text .. "  ... and " .. (#info.decks - 5) .. " more\n"
+                end
+            end
         end
+    else
+        info_text = info_text .. "(Could not read file info)"
     end
 
     UIManager:show(ConfirmBox:new{
-        text = string.format("Import from:\n%s\n\n%s\n\nCards will be added to your flashcard database.",
-            display_name, detail),
-        ok_text = _("Import"),
+        text = _("Import this file?\n\n") .. info_text,
+        ok_text = _("Choose Deck"),
+        cancel_text = _("Cancel"),
         ok_callback = function()
-            hub:doImport(apkg_path)
+            hub:showImportDeckPicker(file)
         end,
     })
 end
 
-function NotecardsHub:doImport(apkg_path)
+function FlashcardsHub:showImportDeckPicker(file)
+    local hub = self
+    local decks = CardDB.getAllDecks()
+    local buttons = {}
+
+    -- Existing decks
+    for __, deck in ipairs(decks) do
+        table.insert(buttons, {{
+            text = deck.name .. " (" .. deck.total .. " cards)",
+            callback = function()
+                UIManager:close(hub._import_deck_dialog)
+                hub:doImport(file.path, deck.id)
+            end,
+        }})
+    end
+
+    -- Create new deck option
+    table.insert(buttons, {{
+        text = _("✦ Create New Deck"),
+        callback = function()
+            UIManager:close(hub._import_deck_dialog)
+            hub:showImportNewDeckDialog(file)
+        end,
+    }})
+
+    -- Cancel
+    table.insert(buttons, {{
+        text = _("Cancel"),
+        callback = function()
+            UIManager:close(hub._import_deck_dialog)
+        end,
+    }})
+
+    hub._import_deck_dialog = ButtonDialog:new{
+        title = _("Import to which deck?"),
+        buttons = buttons,
+    }
+    UIManager:show(hub._import_deck_dialog)
+end
+
+function FlashcardsHub:showImportNewDeckDialog(file)
+    local hub = self
+    local dialog
+    dialog = InputDialog:new{
+        title = _("New Deck Name"),
+        input = file.filename:gsub("%.apkg$", ""),
+        input_hint = _("Enter deck name"),
+        buttons = {{
+            {
+                text = _("Cancel"),
+                id = "close",
+                callback = function() UIManager:close(dialog) end,
+            },
+            {
+                text = _("Create & Import"),
+                is_enter_default = true,
+                callback = function()
+                    local name = dialog:getInputText()
+                    name = CozyUI.sanitizeInput(name, 100)
+                    if name == "" then
+                        UIManager:show(InfoMessage:new{
+                            text = _("Please enter a deck name."),
+                            timeout = 2,
+                        })
+                        return
+                    end
+                    UIManager:close(dialog)
+                    local deck_id = CardDB.createDeck(name)
+                    if not deck_id then
+                        UIManager:show(InfoMessage:new{
+                            text = _("Failed to create deck."),
+                            timeout = 3,
+                        })
+                        return
+                    end
+                    hub:doImport(file.path, deck_id)
+                end,
+            },
+        }},
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+function FlashcardsHub:doImport(apkg_path, deck_id)
     local hub = self
     local AnkiImport = require("lib/anki_import")
 
-    UIManager:show(InfoMessage:new{ text = _("Importing..."), timeout = 1 })
+    UIManager:show(InfoMessage:new{ text = _("Importing cards..."), timeout = 1 })
 
-    UIManager:nextTick(function()
-        local ok, message = AnkiImport.importFromApkg(apkg_path)
+    UIManager:scheduleIn(0.1, function()
+        local opts = {}
+        if deck_id then opts.deck_id = deck_id end
+        local ok, message, count = AnkiImport.importFromApkg(apkg_path, opts)
         if ok then
             UIManager:show(InfoMessage:new{
-                text = message,
+                text = string.format(_("Import Complete!\n\n%s\n\nYour cards are ready for review."), message),
                 timeout = 5,
             })
             hub:refresh()
@@ -3152,7 +3806,7 @@ end
 -- PAINT
 -- ============================================
 
-function NotecardsHub:paintTo(bb, x, y)
+function FlashcardsHub:paintTo(bb, x, y)
     self.dimen.x = x
     self.dimen.y = y
     bb:paintRect(x, y, self.dimen.w, self.dimen.h, WHITE)
@@ -3165,17 +3819,17 @@ end
 -- PUBLIC API
 -- ============================================
 
-function Notecards.show(ui, on_close_callback)
-    if Notecards._hub_instance then
-        UIManager:close(Notecards._hub_instance)
-        Notecards._hub_instance = nil
+function Flashcards.show(ui, on_close_callback)
+    if Flashcards._hub_instance then
+        UIManager:close(Flashcards._hub_instance)
+        Flashcards._hub_instance = nil
     end
 
-    local screen = NotecardsHub:new{
+    local screen = FlashcardsHub:new{
         ui = ui,
         on_close_callback = on_close_callback,
     }
     UIManager:show(screen)
 end
 
-return Notecards
+return Flashcards
