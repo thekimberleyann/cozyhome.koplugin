@@ -28,7 +28,7 @@ local Config = {}
 
 Config.PLUGIN = {
     name = "cozyhome",
-    version = "1.1.1",
+    version = "1.2.0",
     human_name = "Cozy Home",
     description = "A clean, customizable welcome screen for KOReader.",
 }

@@ -14,13 +14,21 @@ highlights, flashcards, and study tools.
 
 ## Screenshots
 
-| Home | Highlights | Review |
-|:----:|:----------:|:------:|
-| ![Home](screenshots/home.png) | ![Highlights](screenshots/highlights.png) | ![Review](screenshots/review.png) |
+| Home | Highlights | Highlight Details |
+|:----:|:----------:|:-----------------:|
+| ![Home](screenshots/home.png) | ![Highlights](screenshots/highlights.png) | ![Highlight Details](screenshots/highlights_details.png) |
 
-| Focus | Learn Space |
-|:-----:|:-----------:|
-| ![Focus](screenshots/focus.png) | ![Learn Space](screenshots/learnspace.png) |
+| Flashcards Hub | All Cards | Flashcard Details |
+|:--------------:|:---------:|:-----------------:|
+| ![Flashcards](screenshots/flashcards.png) | ![All Cards](screenshots/flashcardsall.png) | ![Flashcard Details](screenshots/flashcardsdetails.png) |
+
+| Flashcard Review | Review | Focus |
+|:----------------:|:------:|:-----:|
+| ![Flashcard Review](screenshots/flashcardsreview.png) | ![Review](screenshots/review.png) | ![Focus](screenshots/focus.png) |
+
+| Learn Space | Settings |
+|:-----------:|:--------:|
+| ![Learn Space](screenshots/learnspace.png) | ![Settings](screenshots/settings.png) |
 
 ---
 
