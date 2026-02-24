@@ -187,9 +187,16 @@ function CozyHome:registerHighlightMenuItem()
                     end
                 end
 
-                this:onClose()
+                -- Don't call this:onClose() yet — we need selected_text
+                -- and hold_pos to remain available so the bridge can
+                -- optionally save the highlight as a KOReader bookmark.
+                -- The highlight dialog is closed, but the selection stays.
+                if this.highlight_dialog then
+                    UIManager:close(this.highlight_dialog)
+                    this.highlight_dialog = nil
+                end
                 UIManager:nextTick(function()
-                    HighlightBridge.createCardFromHighlight(highlight_data)
+                    HighlightBridge.createCardFromHighlight(highlight_data, this)
                 end)
             end,
         }
