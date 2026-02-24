@@ -53,7 +53,22 @@ local logger = require("logger")
 local _ = require("gettext")
 local Screen = Device.screen
 
+-- IMPORTANT: Multiple cozy plugins have config.lua files. Lua's
+-- package.loaded["config"] may point to the wrong one depending on
+-- plugin load order. Force-reload our own config if it's missing
+-- the UI constants we need.
 local Config = require("config")
+if not Config.UI or not Config.UI.row_height_class_list then
+    package.loaded["config"] = nil
+    -- Temporarily prepend our plugin dir to package.path
+    local plugin_dir = debug.getinfo(1, "S").source:match("@?(.*/)")
+    if plugin_dir then
+        local old_path = package.path
+        package.path = plugin_dir .. "?.lua;" .. package.path
+        Config = require("config")
+        package.path = old_path
+    end
+end
 local CozyUI = require("lib/cozyui")
 local Database = require("lib/database")
 local BookScanner = require("lib/bookscanner")
@@ -698,13 +713,27 @@ end
 -- ============================================
 
 function ClassListScreen:refresh()
-    UIManager:close(self)
-    local new_screen = ClassListScreen:new{
-        ui = self.ui,
-        on_close_callback = self.on_close_callback,
-        current_page = self.current_page,
-    }
-    UIManager:show(new_screen)
+    local ui = self.ui
+    local on_close = self.on_close_callback
+    local page = self.current_page
+    -- Show new screen BEFORE closing old one to prevent UIManager
+    -- from seeing an empty stack and exiting KOReader.
+    local ok, new_screen = pcall(ClassListScreen.new, ClassListScreen, {
+        ui = ui,
+        on_close_callback = on_close,
+        current_page = page,
+    })
+    if ok and new_screen then
+        UIManager:show(new_screen)
+        UIManager:close(self)
+    else
+        logger.warn("CozyHome LS: refresh() failed to create new screen:", tostring(new_screen))
+        -- Don't close self — keep the old screen visible
+        UIManager:show(InfoMessage:new{
+            text = _("Refresh failed: ") .. tostring(new_screen),
+            timeout = 5,
+        })
+    end
 end
 
 function ClassListScreen:showCreateClassDialog()
@@ -2391,7 +2420,8 @@ function BookPickerScreen:buildUI()
 end
 
 function BookPickerScreen:refreshPicker()
-    UIManager:close(self)
+    -- Show new screen BEFORE closing old one to prevent UIManager
+    -- from seeing an empty stack and exiting KOReader.
     local new_picker = BookPickerScreen:new{
         ui = self.ui,
         class_id = self.class_id,
@@ -2400,6 +2430,7 @@ function BookPickerScreen:refreshPicker()
         current_page = self.current_page,
     }
     UIManager:show(new_picker)
+    UIManager:close(self)
 end
 
 function BookPickerScreen:paintTo(bb, x, y)
@@ -2497,19 +2528,19 @@ function ClassDetailScreen:refreshDetail()
     local fcp = self.flashcards_page
     local hlp = self.highlights_page
 
+    -- Show new screen BEFORE closing old one to prevent UIManager
+    -- from seeing an empty stack and exiting KOReader.
+    local new_detail = ClassDetailScreen:new{
+        ui = ui,
+        class_id = class_id,
+        current_tab = current_tab,
+        on_close_callback = on_close,
+        books_page = bp,
+        flashcards_page = fcp,
+        highlights_page = hlp,
+    }
+    UIManager:show(new_detail)
     UIManager:close(self)
-    UIManager:nextTick(function()
-        local new_detail = ClassDetailScreen:new{
-            ui = ui,
-            class_id = class_id,
-            current_tab = current_tab,
-            on_close_callback = on_close,
-            books_page = bp,
-            flashcards_page = fcp,
-            highlights_page = hlp,
-        }
-        UIManager:show(new_detail)
-    end)
 end
 
 function ClassDetailScreen:paintTo(bb, x, y)

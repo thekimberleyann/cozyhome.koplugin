@@ -53,6 +53,7 @@ local function ensureConn()
     if _conn then return _conn end
 
     local db_path = getDatabasePath()
+    logger.dbg("CozyHome DB: opening database at:", db_path)
     local ok, conn = pcall(SQ3.open, db_path)
     if not ok or not conn then
         logger.warn("CozyHome DB: Failed to open database:", tostring(conn))
@@ -179,6 +180,11 @@ createTables = function(conn)
         conn:exec("CREATE INDEX IF NOT EXISTS idx_class_cards_class ON class_cards(class_id);")
         conn:exec("CREATE INDEX IF NOT EXISTS idx_focus_sessions_date ON focus_sessions(started_at);")
     end)
+
+    -- Migrations: add columns that may be missing from older schemas
+    pcall(function()
+        conn:exec("ALTER TABLE classes ADD COLUMN sort_order INTEGER DEFAULT 0;")
+    end)  -- silently fails if column already exists, which is fine
 end
 
 -- ============================================
@@ -225,7 +231,7 @@ function Database:getPref(key, default)
     if not conn then return default end
 
     local value = default
-    pcall(function()
+    local ok, err = pcall(function()
         local stmt = conn:prepare("SELECT value FROM preferences WHERE key = ?")
         if stmt then
             stmt:bind(key)
@@ -234,6 +240,9 @@ function Database:getPref(key, default)
             stmt:close()
         end
     end)
+    if not ok then
+        logger.warn("CozyHome DB: getPref failed:", err)
+    end
     return value
 end
 
@@ -273,7 +282,7 @@ function Database:getClasses()
     if not conn then return {} end
 
     local classes = {}
-    pcall(function()
+    local ok, err = pcall(function()
         local stmt = conn:prepare(
             "SELECT id, name, icon, color, created_at, sort_order "
             .. "FROM classes ORDER BY sort_order ASC, name ASC"
@@ -292,6 +301,9 @@ function Database:getClasses()
             stmt:close()
         end
     end)
+    if not ok then
+        logger.warn("CozyHome DB: getClasses failed:", err)
+    end
     return classes
 end
 
@@ -303,7 +315,7 @@ function Database:getClass(id)
     if not conn or not id then return nil end
 
     local cls = nil
-    pcall(function()
+    local ok, err = pcall(function()
         local stmt = conn:prepare(
             "SELECT id, name, icon, color, created_at, sort_order "
             .. "FROM classes WHERE id = ?"
@@ -324,6 +336,9 @@ function Database:getClass(id)
             stmt:close()
         end
     end)
+    if not ok then
+        logger.warn("CozyHome DB: getClass failed:", err)
+    end
     return cls
 end
 
@@ -424,7 +439,7 @@ function Database:getClassBooks(class_id)
     if not conn or not class_id then return {} end
 
     local books = {}
-    pcall(function()
+    local ok, err = pcall(function()
         local stmt = conn:prepare(
             "SELECT book_path, book_title, book_author, added_at "
             .. "FROM class_books WHERE class_id = ? ORDER BY added_at ASC"
@@ -442,6 +457,9 @@ function Database:getClassBooks(class_id)
             stmt:close()
         end
     end)
+    if not ok then
+        logger.warn("CozyHome DB: getClassBooks failed:", err)
+    end
     return books
 end
 
@@ -453,7 +471,7 @@ function Database:getClassBookCount(class_id)
     if not conn or not class_id then return 0 end
 
     local count = 0
-    pcall(function()
+    local ok, err = pcall(function()
         local stmt = conn:prepare(
             "SELECT COUNT(*) FROM class_books WHERE class_id = ?"
         )
@@ -464,6 +482,9 @@ function Database:getClassBookCount(class_id)
             stmt:close()
         end
     end)
+    if not ok then
+        logger.warn("CozyHome DB: getClassBookCount failed:", err)
+    end
     return count
 end
 
@@ -529,7 +550,7 @@ function Database:isBookInClass(class_id, book_path)
     if not conn or not class_id or not book_path then return false end
 
     local found = false
-    pcall(function()
+    local ok, err = pcall(function()
         local stmt = conn:prepare(
             "SELECT 1 FROM class_books WHERE class_id = ? AND book_path = ? LIMIT 1"
         )
@@ -540,6 +561,9 @@ function Database:isBookInClass(class_id, book_path)
             stmt:close()
         end
     end)
+    if not ok then
+        logger.warn("CozyHome DB: isBookInClass failed:", err)
+    end
     return found
 end
 
@@ -555,7 +579,7 @@ function Database:getClassCardIds(class_id)
     if not conn or not class_id then return {} end
 
     local ids = {}
-    pcall(function()
+    local ok, err = pcall(function()
         local stmt = conn:prepare(
             "SELECT card_id FROM class_cards WHERE class_id = ? ORDER BY added_at ASC"
         )
@@ -567,6 +591,9 @@ function Database:getClassCardIds(class_id)
             stmt:close()
         end
     end)
+    if not ok then
+        logger.warn("CozyHome DB: getClassCardIds failed:", err)
+    end
     return ids
 end
 
@@ -629,7 +656,7 @@ function Database:isCardInClass(class_id, card_id)
     if not conn or not class_id or not card_id then return false end
 
     local found = false
-    pcall(function()
+    local ok, err = pcall(function()
         local stmt = conn:prepare(
             "SELECT 1 FROM class_cards WHERE class_id = ? AND card_id = ? LIMIT 1"
         )
@@ -640,6 +667,9 @@ function Database:isCardInClass(class_id, card_id)
             stmt:close()
         end
     end)
+    if not ok then
+        logger.warn("CozyHome DB: isCardInClass failed:", err)
+    end
     return found
 end
 
@@ -655,7 +685,7 @@ function Database:getClassLastBook(class_id)
     if not conn or not class_id then return nil end
 
     local path = nil
-    pcall(function()
+    local ok, err = pcall(function()
         local stmt = conn:prepare(
             "SELECT book_path FROM class_last_book WHERE class_id = ?"
         )
@@ -666,6 +696,9 @@ function Database:getClassLastBook(class_id)
             stmt:close()
         end
     end)
+    if not ok then
+        logger.warn("CozyHome DB: getClassLastBook failed:", err)
+    end
     return path
 end
 
@@ -742,20 +775,7 @@ function Database:getFocusSessionStats()
     }
     if not conn then return stats end
 
-    pcall(function()
-        -- Ensure table exists
-        conn:exec([[
-            CREATE TABLE IF NOT EXISTS focus_sessions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                book_path TEXT, book_title TEXT,
-                started_at TEXT DEFAULT (datetime('now', 'localtime')),
-                duration_minutes INTEGER NOT NULL,
-                pages_read INTEGER DEFAULT 0,
-                xp_earned INTEGER DEFAULT 0,
-                completed INTEGER DEFAULT 1
-            );
-        ]])
-
+    local ok, err = pcall(function()
         -- All time
         local stmt = conn:prepare(
             "SELECT COUNT(*), COALESCE(SUM(duration_minutes), 0) "
@@ -800,6 +820,9 @@ function Database:getFocusSessionStats()
             stmt3:close()
         end
     end)
+    if not ok then
+        logger.warn("CozyHome DB: getFocusSessionStats failed:", err)
+    end
     return stats
 end
 
@@ -814,16 +837,7 @@ function Database:getFocusGameData()
     if not conn then return nil end
 
     local data = nil
-    pcall(function()
-        -- Ensure table exists
-        conn:exec([[
-            CREATE TABLE IF NOT EXISTS focus_game_data (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                data TEXT NOT NULL,
-                updated_at TEXT DEFAULT (datetime('now', 'localtime'))
-            );
-        ]])
-
+    local ok, err = pcall(function()
         local stmt = conn:prepare("SELECT data FROM focus_game_data WHERE id = 1")
         if stmt then
             local row = stmt:step()
@@ -840,6 +854,9 @@ function Database:getFocusGameData()
             stmt:close()
         end
     end)
+    if not ok then
+        logger.warn("CozyHome DB: getFocusGameData failed:", err)
+    end
     return data
 end
 
@@ -882,7 +899,7 @@ function Database:getHiddenFolders()
     if not conn then return {} end
 
     local folders = {}
-    pcall(function()
+    local ok, err = pcall(function()
         local stmt = conn:prepare("SELECT path FROM hidden_folders ORDER BY path ASC")
         if stmt then
             for row in stmt:rows() do
@@ -891,6 +908,9 @@ function Database:getHiddenFolders()
             stmt:close()
         end
     end)
+    if not ok then
+        logger.warn("CozyHome DB: getHiddenFolders failed:", err)
+    end
     return folders
 end
 
