@@ -3,7 +3,7 @@
 --   ⊹  File:         learningspace.lua
 --   ⊹  Author:       Kimberley Gonzalez (thekimberleyann)
 --   ⊹  Date:         2026-02-06
---   ⊹  Modified:     2026-02-09
+--   ⊹  Modified:     2026-02-24
 --   ⊹  Project:      Cozy Home for KOReader
 --
 --   🎀 Description:
@@ -1319,6 +1319,9 @@ function ClassDetailScreen:buildBooksTab(items, screen_w, screen_h, content_w, p
             end
         end
 
+        -- Detect file format for indicator tag
+        local is_pdf = book.book_path:lower():match("%.pdf$") ~= nil
+
         -- Title — use max_width to span the full line, TextWidget handles truncation
         local title_display = book.book_title or book.book_path:match("([^/]+)$") or "Unknown"
 
@@ -1329,8 +1332,11 @@ function ClassDetailScreen:buildBooksTab(items, screen_w, screen_h, content_w, p
             max_width = content_w - pad * 2,
         }
 
-        -- Detail line: author + progress
+        -- Detail line: format tag + author + progress
         local detail_parts = {}
+        if is_pdf then
+            table.insert(detail_parts, "[PDF]")
+        end
         if book.book_author and book.book_author ~= "" then
             local author = book.book_author
             if #author > 25 then author = author:sub(1, 22) .. "..." end
@@ -2280,6 +2286,8 @@ function BookPickerScreen:buildUI()
             title_display = title_display:sub(1, 32) .. "..."
         end
 
+        -- Add format tag for PDFs so user knows before adding
+        local is_pdf = book.path:lower():match("%.pdf$") ~= nil
         local row_text = marker .. title_display
         local title_tw = TextWidget:new{
             face = Font:getFace("cfont", 15),
@@ -2287,12 +2295,17 @@ function BookPickerScreen:buildUI()
             fgcolor = in_class and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_DARK_GRAY,
         }
 
-        -- Author subtitle
-        local author_str = ""
-        if book.author and book.author ~= "" then
-            author_str = book.author
-            if #author_str > 40 then author_str = author_str:sub(1, 37) .. "..." end
+        -- Author subtitle + format tag
+        local author_parts = {}
+        if is_pdf then
+            table.insert(author_parts, "[PDF]")
         end
+        if book.author and book.author ~= "" then
+            local author_str = book.author
+            if #author_str > 35 then author_str = author_str:sub(1, 32) .. "..." end
+            table.insert(author_parts, author_str)
+        end
+        local author_str = table.concat(author_parts, "  ")
         local author_tw = TextWidget:new{
             face = Font:getFace("cfont", 12),
             text = author_str,
@@ -2512,8 +2525,29 @@ end
 function ClassDetailScreen:closeAndOpenBook(book_path)
     -- Record this as the last-opened book for quick resume
     Database:setClassLastBook(self.class_id, book_path)
+
+    -- Show a one-time tip for PDF books about highlight limitations.
+    -- Scanned PDFs without a text layer can't be highlighted and will
+    -- freeze if the user tries to long-press select text. We warn once
+    -- per book so the user knows before they hit the issue.
+    local is_pdf = book_path:lower():match("%.pdf$") ~= nil
+    local tip_shown = false
+    if is_pdf then
+        local tip_key = "cozyhome_pdf_tip_shown:" .. book_path
+        if not G_reader_settings:isTrue(tip_key) then
+            G_reader_settings:saveSetting(tip_key, true)
+            tip_shown = true
+        end
+    end
+
     UIManager:close(self)
     UIManager:nextTick(function()
+        if tip_shown then
+            UIManager:show(InfoMessage:new{
+                text = _("Note: This is a PDF file.\n\nIf it's a scanned document (images only), text selection and highlighting won't work. You may need Tesseract OCR data for text extraction.\n\nNative-text PDFs work fine."),
+                timeout = 8,
+            })
+        end
         local ReaderUI = require("apps/reader/readerui")
         ReaderUI:showReader(book_path)
     end)

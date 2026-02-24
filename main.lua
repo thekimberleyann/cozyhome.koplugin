@@ -3,7 +3,7 @@
 --   ⊹  File:         main.lua
 --   ⊹  Author:       Kimberley Gonzalez (thekimberleyann)
 --   ⊹  Date:         2026-02-05
---   ⊹  Modified:     2026-02-11
+--   ⊹  Modified:     2026-02-24
 --   ⊹  Project:      Cozy Home for KOReader
 --
 --   🎀 Description:
@@ -103,10 +103,84 @@ function CozyHome:init()
     -- Register highlight menu item if we are in the reader context
     self:registerHighlightMenuItem()
 
+    -- Protect against freeze when long-pressing scanned PDFs
+    self:patchScannedPdfProtection()
+
     -- Auto-launch Cozy Home on startup (file manager context only)
     self:maybeAutoLaunch()
 
     logger.info("Cozy Home v" .. Config.PLUGIN.version .. " initialized")
+end
+
+-- ============================================
+-- SCANNED PDF PROTECTION
+-- ============================================
+-- Monkey-patches ReaderHighlight:onHold to add a pre-flight
+-- check for scanned PDFs. Without this, long-pressing on a
+-- scanned PDF page triggers Leptonica OCR layout analysis
+-- that floods stderr with errors and freezes the device.
+--
+-- How it works:
+--   1. Before the original onHold runs, we call
+--      doc:getPageTextBoxes(pageno) which reads only the
+--      native text layer (fast, no OCR).
+--   2. If the page has no native text (nil or <=1 boxes)
+--      AND the document is a PDF, we show a user-friendly
+--      message and consume the gesture, preventing the
+--      Leptonica cascade entirely.
+--   3. If the page has text, we call the original onHold
+--      so highlighting works normally.
+
+function CozyHome:patchScannedPdfProtection()
+    -- Only applies in reader context with highlight module
+    if not self.ui or not self.ui.highlight then return end
+    if not self.ui.document then return end
+
+    -- Only patch for PDF documents (DJVU also uses kopt but
+    -- is less likely to trigger this issue)
+    local file = self.ui.document.file or ""
+    if not file:lower():match("%.pdf$") then return end
+
+    local highlight = self.ui.highlight
+    local original_onHold = highlight.onHold
+
+    -- Guard: don't patch twice if plugin reinitializes
+    if highlight._cozy_onHold_patched then return end
+    highlight._cozy_onHold_patched = true
+
+    highlight.onHold = function(self_hl, arg, ges)
+        -- Quick check: does this page have a native text layer?
+        -- getPageTextBoxes reads the PDF's embedded text objects;
+        -- it does NOT trigger OCR/Leptonica processing.
+        local doc = self_hl.ui and self_hl.ui.document
+        if doc and doc.getPageTextBoxes then
+            local hold_pos = self_hl.view:screenToPageTransform(ges.pos)
+            if hold_pos then
+                local text_ok, text = pcall(doc.getPageTextBoxes, doc, hold_pos.page)
+                if text_ok and (not text or #text <= 1) then
+                    -- No native text layer on this page.
+                    -- Check if forced_ocr is enabled (user explicitly
+                    -- wants OCR) — if so, let KOReader handle it.
+                    local forced_ocr = doc.configurable
+                        and doc.configurable.forced_ocr == 1
+                    if not forced_ocr then
+                        logger.dbg("CozyHome: Blocked onHold on scanned PDF page",
+                            hold_pos.page, "(no native text layer)")
+                        UIManager:show(InfoMessage:new{
+                            text = _("This page has no selectable text.\n\nThis appears to be a scanned PDF. Text selection requires either a native text layer or Tesseract OCR data (koreader/data/tessdata)."),
+                            timeout = 5,
+                        })
+                        return true  -- consume gesture, prevent Leptonica cascade
+                    end
+                end
+            end
+        end
+
+        -- Page has text (or it's not a PDF) — run original handler
+        return original_onHold(self_hl, arg, ges)
+    end
+
+    logger.dbg("CozyHome: Scanned PDF hold protection installed")
 end
 
 -- ============================================
@@ -144,7 +218,7 @@ function CozyHome:registerHighlightMenuItem()
     self.ui.highlight:addToHighlightDialog("cozyhome_create_card", function(this)
         return {
             text = _("Create Flashcard"),
-            enabled = true,  -- we'll check at callback time
+            enabled = this.hold_pos ~= nil,
             callback = function()
                 local HighlightBridge = lazyRequire("highlight_bridge")
                 if not HighlightBridge then
@@ -156,7 +230,15 @@ function CozyHome:registerHighlightMenuItem()
                 end
 
                 local selected = this.selected_text
-                if not selected then return end
+                if not selected or not selected.text or selected.text == "" then
+                    -- This typically happens on scanned PDFs without a text
+                    -- layer. KOReader's OCR engine couldn't extract text.
+                    UIManager:show(InfoMessage:new{
+                        text = _("No text could be selected.\n\nThis book may be a scanned PDF without selectable text. To enable text selection, install Tesseract OCR language data in koreader/data/tessdata."),
+                        timeout = 6,
+                    })
+                    return
+                end
 
                 local highlight_data = {
                     text = selected.text or "",
