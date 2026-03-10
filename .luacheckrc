@@ -29,7 +29,8 @@ files["spec/helpers.lua"] = {
     std = "+busted",
 }
 
--- ClassDetailScreen is used as a forward-declared global in learningspace.lua
+-- ClassDetailScreen is a module-scoped global in learningspace.lua
+-- (can't use local due to forward-reference ordering constraints)
 files["learningspace.lua"] = {
     globals = {"ClassDetailScreen"},
 }
