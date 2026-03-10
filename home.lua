@@ -649,6 +649,7 @@ function CozyHomeScreen:getTileCallbacks()
         learnspace = nav("learningspace"),
         flashcards = nav("flashcards"),
         focus      = nav("focusmode"),
+        -- notebooks tile removed; notebooks accessed via Learning Spaces
         settings   = nav("settings"),
 
     }
@@ -717,6 +718,19 @@ function CozyHomeScreen:computeStatsDeferred()
     end)
     if fc_due > 0 then
         table.insert(parts, fc_due .. " cards due")
+    end
+
+    -- Notebook count (quick filesystem scan)
+    local notebook_count = 0
+    pcall(function()
+        local Notebooks = lazyRequire("notebooks")
+        if Notebooks and Notebooks.scanNotebooks then
+            local nbs = Notebooks.scanNotebooks()
+            notebook_count = #nbs
+        end
+    end)
+    if notebook_count > 0 then
+        table.insert(parts, notebook_count .. " notebook" .. (notebook_count ~= 1 and "s" or ""))
     end
 
     -- Focus mode stats (only if already loaded by main.lua)

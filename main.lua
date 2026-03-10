@@ -44,9 +44,9 @@ local logger = require("logger")
 
 local shared_keys = {
     "config", "lib/database", "home", "statusbar", "history",
-    "learningspace", "flashcards",
+    "learningspace", "flashcards", "notebooks",
     "settings", "highlight_bridge", "lib/bookscanner",
-    "lib/highlights",
+    "lib/highlights", "lib/conflict_checker",
     "lib/kobo", "lib/anki_export", "lib/anki_import",
     "highlights", "focusmode", "lib/cozyui", "cozyui",
 }
@@ -487,6 +487,24 @@ function CozyHome:addToMainMenu(menu_items)
                 end,
                 callback = function()
                     G_reader_settings:flipNilOrFalse("cozyhome_auto_launch")
+                end,
+            },
+            {
+                text = _("Check for conflicts"),
+                keep_menu_open = true,
+                callback = function()
+                    local ConflictChecker = lazyRequire("lib/conflict_checker")
+                    if not ConflictChecker then
+                        UIManager:show(InfoMessage:new{
+                            text = _("Conflict checker not available."),
+                            timeout = 3,
+                        })
+                        return
+                    end
+                    local summary = ConflictChecker.summary()
+                    UIManager:show(InfoMessage:new{
+                        text = summary or _("✓ No plugin conflicts detected."),
+                    })
                 end,
             },
             {

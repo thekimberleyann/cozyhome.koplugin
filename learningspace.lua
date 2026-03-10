@@ -3,7 +3,7 @@
 --   ⊹  File:         learningspace.lua
 --   ⊹  Author:       Kimberley Gonzalez (thekimberleyann)
 --   ⊹  Date:         2026-02-06
---   ⊹  Modified:     2026-02-24
+--   ⊹  Modified:     2026-03-10
 --   ⊹  Project:      Cozy Home for KOReader
 --
 --   🎀 Description:
@@ -69,6 +69,8 @@ if not Config.UI or not Config.UI.row_height_class_list then
         package.path = old_path
     end
 end
+local lfs = require("libs/libkoreader-lfs")
+
 local CozyUI = require("lib/cozyui")
 local Database = require("lib/database")
 local BookScanner = require("lib/bookscanner")
@@ -123,7 +125,7 @@ function FlashcardBridge.openDB()
     local DataStorage = require("datastorage")
     local SQ3 = require("lua-ljsqlite3/init")
     local db_path = DataStorage:getSettingsDir() .. "/cozy_flashcards.db"
-    local lfs = require("libs/libkoreader-lfs")
+    -- lfs already available at module level; don't shadow it
     local attr = lfs.attributes(db_path)
     if not attr then return nil end
     local ok, conn = pcall(SQ3.open, db_path)
@@ -545,10 +547,31 @@ function ClassListScreen:buildUI()
                 bold = true,
             }
 
-            -- Detail line: books, cards due, highlights
+            -- Count notebooks for this class (quick dir scan, skips if folder missing)
+            local nb_count = 0
+            pcall(function()
+                local home_dir = G_reader_settings:readSetting("home_dir")
+                    or Device.home_dir or "/mnt/onboard"
+                local safe_cls = cls.name:gsub('[/\\:%*%?"<>|]', "")
+                safe_cls = safe_cls:gsub("^%s+", ""):gsub("%s+$", "")
+                safe_cls = safe_cls:sub(1, 100)
+                if safe_cls == "" then safe_cls = "class" end
+                local nb_dir = home_dir .. "/" .. Config.NOTEBOOKS.folder_name .. "/" .. safe_cls
+                local nb_attr = lfs.attributes(nb_dir)
+                if nb_attr and nb_attr.mode == "directory" then
+                    for f in lfs.dir(nb_dir) do
+                        if f:lower():match("%.pdf$") then nb_count = nb_count + 1 end
+                    end
+                end
+            end)
+
+            -- Detail line: books, notebooks, cards due, highlights
             local detail_parts = {}
             if book_count > 0 then
                 table.insert(detail_parts, book_count .. " book" .. (book_count ~= 1 and "s" or ""))
+            end
+            if nb_count > 0 then
+                table.insert(detail_parts, nb_count .. " notebook" .. (nb_count ~= 1 and "s" or ""))
             end
             if progress then
                 if progress.card_counts.due_today > 0 then
@@ -921,10 +944,11 @@ ClassDetailScreen = InputContainer:extend{
     ui = nil,
     class_id = nil,
     on_close_callback = nil,
-    current_tab = "books",  -- "books", "flashcards", or "highlights"
+    current_tab = "books",  -- "books", "flashcards", "highlights", or "notebooks"
     books_page = 1,
     flashcards_page = 1,
     highlights_page = 1,
+    notebooks_page = 1,
 }
 
 function ClassDetailScreen:init()
@@ -1074,7 +1098,20 @@ function ClassDetailScreen:buildUI()
         show_parent = self,
     }
 
-    -- Right-side action button: "+ Add" on Books, "+ Link Cards" on Notecards
+    local nb_tab_btn = Button:new{
+        text = tabLabel("notebooks", _("Notebooks")),
+        callback = function()
+            detail_screen.current_tab = "notebooks"
+            detail_screen:refreshDetail()
+        end,
+        bordersize = 0,
+        text_font_size = 15,
+        text_font_bold = self.current_tab == "notebooks",
+        padding = 4,
+        show_parent = self,
+    }
+
+    -- Right-side action button
     local add_btn = nil
     if self.current_tab == "books" then
         add_btn = Button:new{
@@ -1089,9 +1126,20 @@ function ClassDetailScreen:buildUI()
         }
     elseif self.current_tab == "flashcards" then
         add_btn = Button:new{
-            text = _("+ Link Cards"),
+            text = _("+ Link"),
             callback = function()
                 detail_screen:showCardLinker()
+            end,
+            bordersize = 0,
+            text_font_size = 15,
+            padding = 4,
+            show_parent = self,
+        }
+    elseif self.current_tab == "notebooks" then
+        add_btn = Button:new{
+            text = _("+ New"),
+            callback = function()
+                detail_screen:showCreateNotebookDialog()
             end,
             bordersize = 0,
             text_font_size = 15,
@@ -1103,10 +1151,12 @@ function ClassDetailScreen:buildUI()
     local tab_buttons = HorizontalGroup:new{
         align = "center",
         books_tab_btn,
-        HorizontalSpan:new{ width = 12 },
+        HorizontalSpan:new{ width = 8 },
         cards_tab_btn,
-        HorizontalSpan:new{ width = 12 },
+        HorizontalSpan:new{ width = 8 },
         hl_tab_btn,
+        HorizontalSpan:new{ width = 8 },
+        nb_tab_btn,
     }
 
     -- Measure tabs and add button, allocate space explicitly
@@ -1243,6 +1293,8 @@ function ClassDetailScreen:buildUI()
         self:buildFlashcardsTab(items, screen_w, screen_h, content_w, pad)
     elseif self.current_tab == "highlights" then
         self:buildHighlightsTab(items, screen_w, screen_h, content_w, pad)
+    elseif self.current_tab == "notebooks" then
+        self:buildNotebooksTab(items, screen_w, screen_h, content_w, pad)
     end
 
     -- ------------------------------------------
@@ -2126,6 +2178,547 @@ function ClassDetailScreen:buildHighlightsTab(items, screen_w, screen_h, content
 end
 
 -- ============================================
+-- NOTEBOOKS TAB
+-- ============================================
+
+--- Get the notebooks directory for a class.
+-- Creates it if it doesn't exist.
+-- @param class_name string
+-- @return string path
+function ClassDetailScreen:getClassNotebooksDir(class_name)
+    local home_dir = G_reader_settings:readSetting("home_dir")
+        or Device.home_dir or "/mnt/onboard"
+    local base = home_dir .. "/" .. Config.NOTEBOOKS.folder_name
+    -- Create base notebooks folder if needed
+    if not lfs.attributes(base) then
+        lfs.mkdir(base)
+    end
+    -- Sanitize for FAT32: only strip / \ : * ? " < > |
+    -- Preserves Unicode letters, accents, CJK, apostrophes, etc.
+    local safe_name = class_name:gsub('[/\\:%*%?"<>|]', "")
+    safe_name = safe_name:gsub("^%s+", ""):gsub("%s+$", "")  -- trim
+    safe_name = safe_name:sub(1, 100)  -- limit path component length
+    if safe_name == "" then safe_name = "class" end
+    local dir = base .. "/" .. safe_name
+    if not lfs.attributes(dir) then
+        lfs.mkdir(dir)
+        logger.info("Notebooks: created class folder:", dir)
+    end
+    return dir
+end
+
+--- Scan a class's notebooks directory for PDFs.
+-- @param dir string
+-- @return table array of {name, filename, path, size, modified}
+function ClassDetailScreen:scanClassNotebooks(dir)
+    local notebooks = {}
+    local ok, iter, obj = pcall(lfs.dir, dir)
+    if not ok then return notebooks end
+
+    for file in iter, obj do
+        if file ~= "." and file ~= ".." and file:lower():match("%.pdf$") then
+            local filepath = dir .. "/" .. file
+            local attr = lfs.attributes(filepath)
+            if attr and attr.mode == "file" then
+                table.insert(notebooks, {
+                    name = file:gsub("%.pdf$", ""):gsub("%.PDF$", ""),
+                    filename = file,
+                    path = filepath,
+                    size = attr.size or 0,
+                    modified = attr.modification or 0,
+                })
+            end
+        end
+    end
+
+    table.sort(notebooks, function(a, b)
+        return a.modified > b.modified
+    end)
+    return notebooks
+end
+
+function ClassDetailScreen:buildNotebooksTab(items, screen_w, screen_h, content_w, pad)
+    local detail_screen = self
+    local cls = Database:getClass(self.class_id)
+    if not cls then return end
+
+    local nb_dir = self:getClassNotebooksDir(cls.name)
+    local notebooks = self:scanClassNotebooks(nb_dir)
+
+    if #notebooks == 0 then
+        table.insert(items, VerticalSpan:new{ width = math.floor(screen_h * 0.08) })
+        table.insert(items, CenterContainer:new{
+            dimen = Geom:new{ w = screen_w, h = 30 },
+            TextWidget:new{
+                face = Font:getFace("cfont", 16),
+                text = _("No notebooks yet"),
+                fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+            },
+        })
+        table.insert(items, VerticalSpan:new{ width = 6 })
+        table.insert(items, CenterContainer:new{
+            dimen = Geom:new{ w = screen_w, h = 24 },
+            TextWidget:new{
+                face = Font:getFace("cfont", 13),
+                text = _("Tap '+ New' to create a notebook"),
+                fgcolor = Blitbuffer.COLOR_GRAY,
+            },
+        })
+        return
+    end
+
+    -- Summary
+    table.insert(items, CenterContainer:new{
+        dimen = Geom:new{ w = screen_w, h = 22 },
+        TextWidget:new{
+            face = Font:getFace("smallinfofont"),
+            text = #notebooks .. " notebook" .. (#notebooks ~= 1 and "s" or ""),
+            fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+        },
+    })
+    table.insert(items, VerticalSpan:new{ width = 4 })
+
+    -- Paginate
+    local row_h = Screen:scaleBySize(Config.UI.row_height_notebook_list)
+    -- +80 compensates for tab bar + progress summary height not in base config value
+    local reserved_h = Screen:scaleBySize(Config.UI.reserved_height_notebook_list + 80)
+    local available_h = screen_h - reserved_h
+    local items_per_page = math.max(3, math.floor(available_h / (row_h + 1)))
+
+    local total_pages = math.ceil(#notebooks / items_per_page)
+    if self.notebooks_page > total_pages then self.notebooks_page = total_pages end
+    if self.notebooks_page < 1 then self.notebooks_page = 1 end
+    local start_idx = (self.notebooks_page - 1) * items_per_page + 1
+    local end_idx = math.min(start_idx + items_per_page - 1, #notebooks)
+
+    for i = start_idx, end_idx do
+        local nb = notebooks[i]
+
+        -- Format size (reuse helper from notebooks.lua)
+        local Notebooks_ref = require("notebooks")
+        local size_str = Notebooks_ref.formatSize(nb.size)
+
+        -- Format date
+        local date_str = ""
+        if nb.modified > 0 then
+            date_str = os.date("%b %d", nb.modified)
+        end
+
+        local name_display = nb.name
+        if #name_display > 30 then
+            name_display = name_display:sub(1, 27) .. "..."
+        end
+
+        local title_tw = TextWidget:new{
+            face = Font:getFace("cfont", 16),
+            text = (Notebooks_ref and Notebooks_ref.NOTEBOOK_ICON or "\xe2\x9c\x8e") .. " " .. name_display,
+            fgcolor = Blitbuffer.COLOR_BLACK,
+            max_width = content_w - pad,
+        }
+
+        local detail_tw = TextWidget:new{
+            face = Font:getFace("cfont", 13),
+            text = size_str .. "  ·  " .. date_str,
+            fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+            max_width = content_w - pad,
+        }
+
+        local text_col = VerticalGroup:new{
+            align = "left",
+            title_tw,
+            VerticalSpan:new{ width = 3 },
+            detail_tw,
+        }
+
+        local row_content = HorizontalGroup:new{
+            align = "center",
+            HorizontalSpan:new{ width = pad },
+            text_col,
+        }
+
+        local nb_ref = nb
+        local TappableRow = InputContainer:extend{}
+        function TappableRow:init()
+            self.dimen = Geom:new{ w = content_w, h = row_h }
+            self.ges_events = {
+                TapRow = {
+                    GestureRange:new{ ges = "tap", range = self.dimen },
+                },
+                HoldRow = {
+                    GestureRange:new{ ges = "hold", range = self.dimen },
+                },
+            }
+            self[1] = LeftContainer:new{
+                dimen = Geom:new{ w = content_w, h = row_h },
+                row_content,
+            }
+        end
+        TappableRow.onTapRow = function()
+            detail_screen:closeAndOpenBook(nb_ref.path)
+            return true
+        end
+        TappableRow.onHoldRow = function()
+            detail_screen:showNotebookActions(nb_ref, nb_dir)
+            return true
+        end
+
+        table.insert(items, CenterContainer:new{
+            dimen = Geom:new{ w = screen_w, h = row_h },
+            TappableRow:new{},
+        })
+
+        if i < end_idx then
+            table.insert(items, CenterContainer:new{
+                dimen = Geom:new{ w = screen_w, h = 1 },
+                LineWidget:new{
+                    dimen = Geom:new{ w = content_w - 20, h = 1 },
+                    background = Blitbuffer.COLOR_LIGHT_GRAY,
+                },
+            })
+        end
+    end
+
+    -- Pagination
+    if total_pages > 1 then
+        table.insert(items, VerticalSpan:new{ width = 8 })
+        local prev_btn = Button:new{
+            text = _("< Prev"),
+            enabled = self.notebooks_page > 1,
+            callback = function()
+                detail_screen.notebooks_page = detail_screen.notebooks_page - 1
+                detail_screen:refreshDetail()
+            end,
+            bordersize = 0, text_font_size = 14, show_parent = self,
+        }
+        local page_label = TextWidget:new{
+            face = Font:getFace("cfont", 14),
+            text = string.format(_("Page %d of %d"), self.notebooks_page, total_pages),
+            fgcolor = Blitbuffer.COLOR_DARK_GRAY,
+        }
+        local next_btn = Button:new{
+            text = _("Next >"),
+            enabled = self.notebooks_page < total_pages,
+            callback = function()
+                detail_screen.notebooks_page = detail_screen.notebooks_page + 1
+                detail_screen:refreshDetail()
+            end,
+            bordersize = 0, text_font_size = 14, show_parent = self,
+        }
+        table.insert(items, CenterContainer:new{
+            dimen = Geom:new{ w = screen_w, h = 36 },
+            HorizontalGroup:new{
+                align = "center",
+                prev_btn,
+                HorizontalSpan:new{ width = 20 },
+                page_label,
+                HorizontalSpan:new{ width = 20 },
+                next_btn,
+            },
+        })
+    end
+end
+
+-- ============================================
+-- NOTEBOOK ACTIONS (Create, Rename, Duplicate, Delete)
+-- ============================================
+
+function ClassDetailScreen:showCreateNotebookDialog()
+    local detail_screen = self
+    local cls = Database:getClass(self.class_id)
+    if not cls then return end
+
+    -- Step 1: Name
+    local dialog
+    dialog = InputDialog:new{
+        title = _("\xe2\x9c\x8e New Notebook"),
+        input = "",
+        input_hint = _("Notebook name"),
+        buttons = {
+            {
+                {
+                    text = _("Cancel"),
+                    id = "close",
+                    callback = function() UIManager:close(dialog) end,
+                },
+                {
+                    text = _("Next"),
+                    is_enter_default = true,
+                    callback = function()
+                        local raw_name = dialog:getInputText()
+                        UIManager:close(dialog)
+                        local name = CozyUI.sanitizeInput(raw_name, Config.UI.max_notebook_name)
+                        if name == "" then return end
+                        -- Step 2: Template picker
+                        detail_screen:showTemplatePicker(cls, name)
+                    end,
+                },
+            },
+        },
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+function ClassDetailScreen:showTemplatePicker(cls, notebook_name)
+    local detail_screen = self
+    local dialog
+    dialog = ButtonDialog:new{
+        title = _("Choose template"),
+        buttons = {
+            {{ text = _("Blank"), callback = function()
+                UIManager:close(dialog)
+                detail_screen:showPageCountPicker(cls, notebook_name, "blank")
+            end }},
+            {{ text = _("Lined"), callback = function()
+                UIManager:close(dialog)
+                detail_screen:showPageCountPicker(cls, notebook_name, "lined")
+            end }},
+            {{ text = _("Graph"), callback = function()
+                UIManager:close(dialog)
+                detail_screen:showPageCountPicker(cls, notebook_name, "graph")
+            end }},
+            {{ text = _("Dotted"), callback = function()
+                UIManager:close(dialog)
+                detail_screen:showPageCountPicker(cls, notebook_name, "dotted")
+            end }},
+            {{ text = _("Cancel"), callback = function() UIManager:close(dialog) end }},
+        },
+    }
+    UIManager:show(dialog)
+end
+
+function ClassDetailScreen:showPageCountPicker(cls, notebook_name, template)
+    local detail_screen = self
+    local SpinWidget = require("ui/widget/spinwidget")
+    local spin = SpinWidget:new{
+        title_text = _("Number of pages"),
+        value = Config.NOTEBOOKS.default_page_count,
+        value_min = Config.NOTEBOOKS.min_page_count,
+        value_max = Config.NOTEBOOKS.max_page_count,
+        value_step = 1,
+        ok_text = _("Create"),
+        callback = function(spin_widget)
+            local page_count = spin_widget.value
+            detail_screen:createNotebook(cls, notebook_name, template, page_count)
+        end,
+    }
+    UIManager:show(spin)
+end
+
+function ClassDetailScreen:createNotebook(cls, notebook_name, template, page_count)
+    local Notebooks = require("notebooks")
+    local nb_dir = self:getClassNotebooksDir(cls.name)
+    local filepath = nb_dir .. "/" .. notebook_name .. ".pdf"
+
+    -- Check duplicate
+    if lfs.attributes(filepath) then
+        UIManager:show(InfoMessage:new{
+            text = _("A notebook with this name already exists."),
+            timeout = 3,
+        })
+        return
+    end
+
+    local ok, err = Notebooks.generatePDF(filepath, template, page_count)
+    if ok then
+        self:refreshDetail()
+        -- Auto-open the new notebook
+        UIManager:nextTick(function()
+            UIManager:show(InfoMessage:new{
+                text = string.format(_("Created '%s' (%d pages, %s)"),
+                    notebook_name, page_count, template),
+                timeout = 2,
+            })
+        end)
+    else
+        UIManager:show(InfoMessage:new{
+            text = _("Failed to create notebook: ") .. tostring(err),
+            timeout = 3,
+        })
+    end
+end
+
+function ClassDetailScreen:showNotebookActions(nb, nb_dir)
+    local detail_screen = self
+    local dialog
+    dialog = ButtonDialog:new{
+        title = nb.name,
+        buttons = {
+            {{ text = _("Open"), callback = function()
+                UIManager:close(dialog)
+                detail_screen:closeAndOpenBook(nb.path)
+            end }},
+            {{ text = _("Rename"), callback = function()
+                UIManager:close(dialog)
+                detail_screen:renameNotebook(nb, nb_dir)
+            end }},
+            {{ text = _("Duplicate"), callback = function()
+                UIManager:close(dialog)
+                detail_screen:duplicateNotebook(nb, nb_dir)
+            end }},
+            {{ text = _("Delete"), callback = function()
+                UIManager:close(dialog)
+                detail_screen:deleteNotebook(nb)
+            end }},
+            {{ text = _("Cancel"), callback = function() UIManager:close(dialog) end }},
+        },
+    }
+    UIManager:show(dialog)
+end
+
+function ClassDetailScreen:renameNotebook(nb, nb_dir)
+    local detail_screen = self
+    local dialog
+    dialog = InputDialog:new{
+        title = _("Rename notebook"),
+        input = nb.name,
+        buttons = {
+            {
+                {
+                    text = _("Cancel"),
+                    id = "close",
+                    callback = function() UIManager:close(dialog) end,
+                },
+                {
+                    text = _("Rename"),
+                    is_enter_default = true,
+                    callback = function()
+                        local raw = dialog:getInputText()
+                        UIManager:close(dialog)
+                        local new_name = CozyUI.sanitizeInput(raw, Config.UI.max_notebook_name)
+                        if new_name == "" or new_name == nb.name then return end
+                        local new_path = nb_dir .. "/" .. new_name .. ".pdf"
+                        if lfs.attributes(new_path) then
+                            UIManager:show(InfoMessage:new{
+                                text = _("A notebook with this name already exists."),
+                                timeout = 3,
+                            })
+                            return
+                        end
+                        -- Guard: don't rename if currently open in reader
+                        local ReaderUI_check = require("apps/reader/readerui")
+                        if ReaderUI_check.instance and ReaderUI_check.instance.document
+                                and ReaderUI_check.instance.document.file == nb.path then
+                            UIManager:show(InfoMessage:new{
+                                text = _("Close this notebook first before renaming."),
+                                timeout = 3,
+                            })
+                            return
+                        end
+                        local ok, err = os.rename(nb.path, new_path)
+                        if ok then
+                            -- Also rename sidecar directory (pencil strokes)
+                            local old_sdr = nb.path .. ".sdr"
+                            if lfs.attributes(old_sdr) then
+                                local new_sdr = new_path .. ".sdr"
+                                local sdr_ok, sdr_err = os.rename(old_sdr, new_sdr)
+                                if not sdr_ok then
+                                    logger.warn("Notebooks: failed to rename sdr:", sdr_err)
+                                end
+                            end
+                            detail_screen:refreshDetail()
+                        else
+                            UIManager:show(InfoMessage:new{
+                                text = _("Failed to rename: ") .. tostring(err),
+                                timeout = 3,
+                            })
+                        end
+                    end,
+                },
+            },
+        },
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+function ClassDetailScreen:duplicateNotebook(nb, nb_dir)
+    -- Find a unique name
+    local base_name = nb.name
+    local copy_name = base_name .. " (copy)"
+    local copy_path = nb_dir .. "/" .. copy_name .. ".pdf"
+    local counter = 2
+    while lfs.attributes(copy_path) do
+        copy_name = base_name .. " (copy " .. counter .. ")"
+        copy_path = nb_dir .. "/" .. copy_name .. ".pdf"
+        counter = counter + 1
+    end
+
+    -- Chunked copy to avoid loading entire PDF into RAM on low-memory device
+    local src = io.open(nb.path, "rb")
+    if not src then
+        UIManager:show(InfoMessage:new{
+            text = _("Failed to read source notebook."),
+            timeout = 3,
+        })
+        return
+    end
+
+    local dst = io.open(copy_path, "wb")
+    if not dst then
+        src:close()
+        UIManager:show(InfoMessage:new{
+            text = _("Failed to create copy."),
+            timeout = 3,
+        })
+        return
+    end
+
+    local chunk_size = 65536  -- 64KB chunks
+    while true do
+        local chunk = src:read(chunk_size)
+        if not chunk then break end
+        dst:write(chunk)
+    end
+    src:close()
+    dst:close()
+
+    logger.info("Notebooks: duplicated", nb.name, "as", copy_name)
+    self:refreshDetail()
+end
+
+function ClassDetailScreen:deleteNotebook(nb)
+    local detail_screen = self
+    UIManager:show(ConfirmBox:new{
+        text = string.format(_("Delete notebook '%s'?\n\nThis cannot be undone."), nb.name),
+        ok_text = _("Delete"),
+        ok_callback = function()
+            local ok, err = os.remove(nb.path)
+            if ok then
+                -- Also remove sidecar directory if it exists (pencil strokes)
+                local sdr = nb.path .. ".sdr"
+                if lfs.attributes(sdr) then
+                    -- Recursive removal (sidecar may contain subdirectories)
+                    local function rmdir_r(d)
+                        local d_ok, d_iter, d_obj = pcall(lfs.dir, d)
+                        if not d_ok then return end
+                        for f in d_iter, d_obj do
+                            if f ~= "." and f ~= ".." then
+                                local fpath = d .. "/" .. f
+                                local fattr = lfs.attributes(fpath)
+                                if fattr and fattr.mode == "directory" then
+                                    rmdir_r(fpath)
+                                else
+                                    os.remove(fpath)
+                                end
+                            end
+                        end
+                        lfs.rmdir(d)
+                    end
+                    pcall(rmdir_r, sdr)
+                end
+                detail_screen:refreshDetail()
+            else
+                UIManager:show(InfoMessage:new{
+                    text = _("Failed to delete: ") .. tostring(err),
+                    timeout = 3,
+                })
+            end
+        end,
+    })
+end
+
+-- ============================================
 -- BOOK PICKER (from library scan)
 -- ============================================
 
@@ -2561,6 +3154,7 @@ function ClassDetailScreen:refreshDetail()
     local bp = self.books_page
     local fcp = self.flashcards_page
     local hlp = self.highlights_page
+    local nbp = self.notebooks_page
 
     -- Show new screen BEFORE closing old one to prevent UIManager
     -- from seeing an empty stack and exiting KOReader.
@@ -2572,6 +3166,7 @@ function ClassDetailScreen:refreshDetail()
         books_page = bp,
         flashcards_page = fcp,
         highlights_page = hlp,
+        notebooks_page = nbp,
     }
     UIManager:show(new_detail)
     UIManager:close(self)

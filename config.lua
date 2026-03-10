@@ -76,6 +76,8 @@ Config.TILES = {
         enabled = true,
         description = "Pomodoro focus timer with XP and streaks",
     },
+    -- Notebooks tile removed — notebooks are accessed via Learning Spaces
+    -- (learningspace.lua Notebooks tab)
     {
         key = "settings",
         label = "Settings",
@@ -167,6 +169,11 @@ Config.UI = {
 
     -- Flashcards hub
     progress_bar_chars = 12,
+
+    -- Notebooks
+    row_height_notebook_list = 68,
+    reserved_height_notebook_list = 200,
+    max_notebook_name = 50,
 }
 
 -- ============================================
@@ -250,6 +257,19 @@ Config.SCHEDULING_PRESETS = {
 }
 
 Config.DEFAULT_SCHEDULING_PRESET = "relaxed"
+
+-- ============================================
+-- NOTEBOOKS SETTINGS
+-- ============================================
+
+Config.NOTEBOOKS = {
+    folder_name = "notebooks",
+    default_page_count = 20,
+    min_page_count = 1,
+    max_page_count = 200,
+    page_w_pt = 595,   -- A4 width in PDF points
+    page_h_pt = 842,   -- A4 height in PDF points
+}
 
 -- ============================================
 -- DEBUG SETTINGS
