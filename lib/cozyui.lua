@@ -482,4 +482,49 @@ function CozyUI.sanitizeInput(text, max_len, allow_newlines)
     return text
 end
 
+-- ─── Filename sanitization helper ───
+--- Sanitizes user-provided text intended for use as a filesystem path
+-- component (filename or single directory segment). Builds on
+-- sanitizeInput, then strips characters that would change path meaning
+-- or that FAT32 forbids: path separators (/, \), drive/colon (:),
+-- wildcards (* ?), redirection/quote (" < > |), and the parent-dir
+-- sequence (..). Leading/trailing dots and spaces are also stripped
+-- (Windows treats trailing dots/spaces specially; leading dot would
+-- make the file hidden on Unix).
+-- Returns empty string if the input collapses to nothing safe — caller
+-- must check and refuse to use the result for a path.
+-- @param text string|nil: Raw input text
+-- @param max_len number: Maximum allowed length (post-strip)
+-- @return string: Sanitized name suitable for a single path component
+function CozyUI.sanitizeFilename(text, max_len)
+    -- Defer to sanitizeInput first: trim, remove control chars, no newlines.
+    -- We pass a generous interim cap and re-clamp after stripping so that
+    -- length enforcement reflects the *final* visible name.
+    local s = CozyUI.sanitizeInput(text, max_len and (max_len * 2) or 256, false)
+    if s == "" then return "" end
+
+    -- Strip path separators and reserved filename chars
+    s = s:gsub('[/\\:%*%?"<>|]', "")
+
+    -- Collapse any ".." sequences (path traversal) to a single dot.
+    -- Loop because gsub is single-pass and overlapping runs (e.g. "....")
+    -- can leave residual ".." after one substitution.
+    while s:find("%.%.") do
+        s = s:gsub("%.%.", ".")
+    end
+
+    -- Strip leading/trailing dots and whitespace.
+    -- Leading dot → hidden file on Unix; trailing dot/space → invalid on Windows.
+    s = s:gsub("^[%s%.]+", ""):gsub("[%s%.]+$", "")
+
+    -- Re-clamp to caller's max_len after all stripping
+    if max_len and #s > max_len then
+        s = s:sub(1, max_len)
+        -- If the clamp re-introduced a trailing dot/space, trim again
+        s = s:gsub("[%s%.]+$", "")
+    end
+
+    return s
+end
+
 return CozyUI

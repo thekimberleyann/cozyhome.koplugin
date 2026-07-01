@@ -79,9 +79,17 @@ function History.show(ui, on_close)
         height = Screen:getHeight(),
         covers_fullscreen = true,
         onMenuClose = function()
-            UIManager:close(menu)
-            History._menu = nil
-            if on_close then on_close() end
+            if on_close then
+                -- Show parent screen first to prevent flash of file manager
+                on_close()
+                UIManager:nextTick(function()
+                    UIManager:close(menu)
+                    History._menu = nil
+                end)
+            else
+                UIManager:close(menu)
+                History._menu = nil
+            end
         end,
     }
     History._menu = menu

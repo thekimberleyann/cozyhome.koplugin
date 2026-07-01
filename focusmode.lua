@@ -161,6 +161,10 @@ local ACHIEVEMENT_CATEGORIES = {
 local FocusMode = {}
 FocusMode._current_instance = nil
 
+-- Whether suspend/resume should adjust the timer (default: true).
+-- User can disable in Focus Settings if they prefer simpler behaviour.
+local suspend_resume_enabled = true
+
 -- Persistent timer state (survives screen close/reopen)
 local timer_state = {
     active = false,
@@ -201,11 +205,23 @@ local function getFlashcardDB()
     return conn
 end
 
---- Get count of cards due for review
-local function getDueCardCount()
-    local conn = getFlashcardDB()
-    if not conn then return 0 end
+-- Cache for getDueCardCount: avoids opening the flashcard DB every second
+-- during breaks (buildUI refreshes once per second while the timer ticks).
+local _due_card_cache = { count = 0, fetched_at = 0 }
+local DUE_CARD_TTL = 60  -- seconds
 
+--- Get count of cards due for review (cached, 60-second TTL).
+-- Opening the DB on every call was the main active-use drain during breaks.
+local function getDueCardCount()
+    local now = os.time()
+    if now - _due_card_cache.fetched_at < DUE_CARD_TTL then
+        return _due_card_cache.count
+    end
+    local conn = getFlashcardDB()
+    if not conn then
+        _due_card_cache = { count = 0, fetched_at = now }
+        return 0
+    end
     local count = 0
     pcall(function()
         local today = os.date("%Y-%m-%d")
@@ -221,6 +237,7 @@ local function getDueCardCount()
         end
     end)
     pcall(function() conn:close() end)
+    _due_card_cache = { count = count, fetched_at = now }
     return count
 end
 
@@ -625,6 +642,9 @@ function FocusMode.startBreak(duration, break_type)
     timer_state.is_break = true
     timer_state.session_type = break_type or "short_break"
     timer_state.time_remaining = duration * 60
+    -- Fetch due-card count once at break start; buildUI reads timer_state.due_cards
+    -- directly instead of calling getDueCardCount() on every 1-second refresh.
+    timer_state.due_cards = getDueCardCount()
     UIManager:scheduleIn(1, timerTick)
     if FocusMode._current_instance then
         FocusMode._current_instance:refresh()
@@ -702,8 +722,15 @@ function CozyFocusScreen:onCloseWidget()
 end
 
 function CozyFocusScreen:onClose()
-    UIManager:close(self)
-    if self.on_close_callback then self.on_close_callback() end
+    if self.on_close_callback then
+        -- Show parent screen first to prevent flash of file manager
+        self.on_close_callback()
+        UIManager:nextTick(function()
+            UIManager:close(self)
+        end)
+    else
+        UIManager:close(self)
+    end
     return true
 end
 
@@ -797,10 +824,11 @@ function CozyFocusScreen:buildUI()
             },
         })
 
-        -- During breaks: show "Review Cards" button if available
+        -- During breaks: show "Review Cards" button if available.
+        -- due_cards was fetched once in startBreak() and stored in timer_state,
+        -- so this 1-second refresh cycle never hits the database.
         if timer_state.is_break then
-            local due_cards = 0
-            pcall(function() due_cards = getDueCardCount() end)
+            local due_cards = timer_state.due_cards or 0
             if due_cards > 0 then
                 table.insert(items, sp(8))
                 local review_btn = Button:new{
@@ -983,8 +1011,14 @@ function CozyAchievementsScreen:onCloseWidget()
 end
 
 function CozyAchievementsScreen:onClose()
-    UIManager:close(self)
-    if self.on_close_callback then self.on_close_callback() end
+    if self.on_close_callback then
+        self.on_close_callback()
+        UIManager:nextTick(function()
+            UIManager:close(self)
+        end)
+    else
+        UIManager:close(self)
+    end
     return true
 end
 
@@ -1122,8 +1156,14 @@ function CozyHistoryScreen:onCloseWidget()
 end
 
 function CozyHistoryScreen:onClose()
-    UIManager:close(self)
-    if self.on_close_callback then self.on_close_callback() end
+    if self.on_close_callback then
+        self.on_close_callback()
+        UIManager:nextTick(function()
+            UIManager:close(self)
+        end)
+    else
+        UIManager:close(self)
+    end
     return true
 end
 
@@ -1408,6 +1448,17 @@ function CozyFocusScreen:showSettings()
                 end,
             }},
             {{
+                text = suspend_resume_enabled
+                    and _("Sleep-safe timer: On")
+                    or  _("Sleep-safe timer: Off"),
+                callback = function()
+                    suspend_resume_enabled = not suspend_resume_enabled
+                    Database:setPref("focus_suspend_resume", tostring(suspend_resume_enabled))
+                    UIManager:close(dialog)
+                    focus_screen:showSettings()
+                end,
+            }},
+            {{
                 text = _("Close"),
                 callback = function() UIManager:close(dialog) end,
             }},
@@ -1454,6 +1505,8 @@ function FocusMode.loadSettings()
     loadGameData()
     local wd = Database:getPref("focus_work_duration", nil)
     if wd then Config.FOCUS.work_duration = tonumber(wd) or 25 end
+    local sr = Database:getPref("focus_suspend_resume", nil)
+    if sr ~= nil then suspend_resume_enabled = (sr == "true") end
     local sb = Database:getPref("focus_short_break", nil)
     if sb then Config.FOCUS.short_break = tonumber(sb) or 5 end
     local lb = Database:getPref("focus_long_break", nil)
@@ -1492,5 +1545,40 @@ end
 
 -- Register with CozyUI so every screen header shows the countdown
 CozyUI.getTimerDisplay = FocusMode.getTimerDisplay
+
+-- ─────────────────────────────────────────
+-- Suspend / Resume handlers
+-- ─────────────────────────────────────────
+
+--- Called by CozyHome:onSuspend when the device sleeps.
+-- Records wall-clock time so elapsed sleep time can be subtracted
+-- on resume, and CANCELS the pending timerTick. timerTick reschedules
+-- itself every second while active+unpaused, so without this cancel the
+-- stale tick chain survives sleep and onResume would schedule a SECOND
+-- chain on top of it, decrementing time_remaining twice per second.
+function FocusMode.onSuspend()
+    if not suspend_resume_enabled then return end
+    if timer_state.active and not timer_state.paused then
+        timer_state._suspend_time = os.time()
+        UIManager:unschedule(timerTick)
+    end
+end
+
+--- Called by CozyHome:onResume when the device wakes.
+-- Subtracts time slept from time_remaining and restarts the tick.
+-- If the timer would have expired during sleep, fires onTimerComplete.
+function FocusMode.onResume()
+    if not suspend_resume_enabled then return end
+    if timer_state.active and not timer_state.paused and timer_state._suspend_time then
+        local elapsed = os.time() - timer_state._suspend_time
+        timer_state.time_remaining = math.max(0, timer_state.time_remaining - elapsed)
+        timer_state._suspend_time = nil
+        if timer_state.time_remaining > 0 then
+            UIManager:scheduleIn(1, timerTick)
+        else
+            onTimerComplete()
+        end
+    end
+end
 
 return FocusMode

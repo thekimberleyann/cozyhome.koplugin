@@ -189,7 +189,15 @@ function CozyHomeScreen:onCloseWidget()
         self._cover_bb:free()
         self._cover_bb = nil
     end
-    Home._current_instance = nil
+    -- Only clear the shared pointer if it still points at US. Home.show shows
+    -- the NEW screen (whose init sets _current_instance = new) BEFORE closing
+    -- the old one, so an unguarded nil here would wipe the live new instance:
+    -- isOpen() would report closed while home is visible, and the new screen's
+    -- deferred stats callback (guarded by _current_instance == self) would
+    -- never fire, leaving the dashboard stuck on "Loading…".
+    if Home._current_instance == self then
+        Home._current_instance = nil
+    end
     UIManager:setDirty(nil, function()
         return "full", self.dimen
     end)
@@ -766,8 +774,25 @@ end
 -- ─── Helpers ───
 
 function CozyHomeScreen:closeAndRun(callback)
-    UIManager:close(self)
-    if callback then UIManager:nextTick(callback) end
+    -- Show the next screen BEFORE closing this one to avoid
+    -- a flash of the KOReader file manager underneath.
+    -- We schedule the callback first, then close on the same tick.
+    -- The callback creates and shows the new screen, which covers
+    -- us before the close triggers a repaint of the layer below.
+    if callback then
+        UIManager:nextTick(function()
+            callback()
+            -- Close after the new screen is shown (deferred so the
+            -- new screen is already in the widget stack)
+            UIManager:nextTick(function()
+                if self and self[1] then
+                    UIManager:close(self)
+                end
+            end)
+        end)
+    else
+        UIManager:close(self)
+    end
 end
 
 function CozyHomeScreen:paintTo(bb, x, y)
@@ -780,14 +805,15 @@ end
 -- ─── Public API ───
 
 function Home.show(ui, on_close_callback)
-    if Home._current_instance then
-        UIManager:close(Home._current_instance)
-        Home._current_instance = nil
-    end
+    local old_instance = Home._current_instance
     local screen = CozyHomeScreen:new{
         ui = ui, on_close_callback = on_close_callback,
     }
+    -- Show new screen BEFORE closing old one to prevent flash
     UIManager:show(screen)
+    if old_instance then
+        UIManager:close(old_instance)
+    end
 end
 
 function Home.isOpen() return Home._current_instance ~= nil end

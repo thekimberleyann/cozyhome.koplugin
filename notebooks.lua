@@ -80,7 +80,7 @@ local function templateBlank()
 end
 
 local function templateLined(w, h)
-    local parts = {"0.85 G", "0.5 w"}  -- light gray, thin line
+    local parts = {"0.65 G", "0.5 w"}  -- medium gray, thin line
     local spacing = 24
     local top_margin = spacing * 3  -- leave space at top
     local bottom_margin = spacing
@@ -94,7 +94,7 @@ local function templateLined(w, h)
 end
 
 local function templateGraph(w, h)
-    local parts = {"0.85 G", "0.3 w"}  -- light gray, very thin
+    local parts = {"0.65 G", "0.4 w"}  -- medium gray, thin
     local spacing = 20
     -- Vertical lines
     local x = spacing
@@ -112,7 +112,7 @@ local function templateGraph(w, h)
 end
 
 local function templateDotted(w, h)
-    local parts = {"0.6 G"}  -- medium gray dots
+    local parts = {"0.45 G"}  -- darker gray dots
     local spacing = 20
     local r = 1.2  -- dot radius
     local x = spacing
@@ -487,9 +487,14 @@ function NotebooksScreen:onCloseWidget()
 end
 
 function NotebooksScreen:onClose()
-    UIManager:close(self)
     if self.on_back_callback then
-        UIManager:nextTick(self.on_back_callback)
+        -- Show parent screen first to prevent flash of file manager
+        self.on_back_callback()
+        UIManager:nextTick(function()
+            UIManager:close(self)
+        end)
+    else
+        UIManager:close(self)
     end
     return true
 end

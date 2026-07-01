@@ -82,6 +82,30 @@ local BookScanner = require("lib/bookscanner")
 -- Items-per-page is now calculated dynamically in each screen/tab
 -- based on available screen height and row size.
 
+-- Pagination bar height (scaled): prev/next buttons + spacing
+local PAGINATION_BAR_H = 44  -- base pixels, will be scaled at use site
+
+--- Measure the total height of items already added to a VerticalGroup-style
+-- items table. This replaces the old reserved_h guesswork — we measure the
+-- actual rendered header/chrome instead of estimating.
+-- @param items_table table: array of widgets already inserted
+-- @return number: total pixel height consumed so far
+local function measureItemsHeight(items_table)
+    local total = 0
+    for _, widget in ipairs(items_table) do
+        if widget and widget.getSize then
+            local s = widget:getSize()
+            if s and s.h then total = total + s.h end
+        elseif widget and widget.dimen and widget.dimen.h then
+            total = total + widget.dimen.h
+        elseif widget and widget.width then
+            -- VerticalSpan stores its height in .width (KOReader convention)
+            total = total + widget.width
+        end
+    end
+    return total
+end
+
 -- ============================================
 -- ICON CHOICES for classes
 -- ============================================
@@ -396,9 +420,16 @@ function ClassListScreen:onCloseWidget()
 end
 
 function ClassListScreen:onClose()
-    UIManager:close(self)
     if self.on_close_callback then
-        UIManager:nextTick(self.on_close_callback)
+        -- Show the parent screen BEFORE closing this one so there
+        -- is no frame where the underlying file manager is visible
+        -- (prevents the "gallery flash" on e-ink).
+        self.on_close_callback()
+        UIManager:nextTick(function()
+            UIManager:close(self)
+        end)
+    else
+        UIManager:close(self)
     end
     return true
 end
@@ -490,10 +521,11 @@ function ClassListScreen:buildUI()
             },
         })
     else
-        -- Paginate
+        -- Paginate — measure actual header height instead of guessing
         local row_h = Screen:scaleBySize(Config.UI.row_height_class_list)
-        local reserved_h = Screen:scaleBySize(Config.UI.reserved_height_class_list)  -- header + separator + new button + pagination
-        local available_h = screen_h - reserved_h
+        local header_h = measureItemsHeight(items)
+        local pagination_h = Screen:scaleBySize(PAGINATION_BAR_H)
+        local available_h = screen_h - header_h - pagination_h
         local items_per_page = math.max(3, math.floor(available_h / (row_h + 1)))
 
         local total_pages = math.ceil(#classes / items_per_page)
@@ -912,17 +944,17 @@ end
 
 function ClassListScreen:openClassDetail(class_id)
     local list_screen = self
+    -- Show new screen BEFORE closing old one to prevent flash
+    -- of the KOReader file manager underneath.
+    local detail = ClassDetailScreen:new{
+        ui = list_screen.ui,
+        class_id = class_id,
+        on_close_callback = function()
+            LearningSpace.showList(list_screen.ui, list_screen.on_close_callback)
+        end,
+    }
+    UIManager:show(detail)
     UIManager:close(self)
-    UIManager:nextTick(function()
-        local detail = ClassDetailScreen:new{
-            ui = list_screen.ui,
-            class_id = class_id,
-            on_close_callback = function()
-                LearningSpace.showList(list_screen.ui, list_screen.on_close_callback)
-            end,
-        }
-        UIManager:show(detail)
-    end)
 end
 
 function ClassListScreen:paintTo(bb, x, y)
@@ -982,9 +1014,14 @@ function ClassDetailScreen:onCloseWidget()
 end
 
 function ClassDetailScreen:onClose()
-    UIManager:close(self)
     if self.on_close_callback then
-        UIManager:nextTick(self.on_close_callback)
+        -- Show parent screen first to prevent flash of file manager
+        self.on_close_callback()
+        UIManager:nextTick(function()
+            UIManager:close(self)
+        end)
+    else
+        UIManager:close(self)
     end
     return true
 end
@@ -1345,10 +1382,11 @@ function ClassDetailScreen:buildBooksTab(items, screen_w, screen_h, content_w, p
         return
     end
 
-    -- Paginate
+    -- Paginate — measure actual header/chrome height
     local row_h = Screen:scaleBySize(Config.UI.row_height_class_detail)
-    local reserved_h = Screen:scaleBySize(Config.UI.reserved_height_class_detail)  -- header + tabs + progress + pagination
-    local available_h = screen_h - reserved_h
+    local header_h = measureItemsHeight(items)
+    local pagination_h = Screen:scaleBySize(PAGINATION_BAR_H)
+    local available_h = screen_h - header_h - pagination_h
     local items_per_page = math.max(3, math.floor(available_h / (row_h + 1)))
 
     local total_pages = math.ceil(#books / items_per_page)
@@ -1679,10 +1717,11 @@ function ClassDetailScreen:buildFlashcardsTab(items, screen_w, screen_h, content
         return
     end
 
-    -- Paginate
+    -- Paginate — measure actual header/chrome height
     local row_h = Screen:scaleBySize(Config.UI.row_height_class_flashcards)
-    local reserved_h = Screen:scaleBySize(Config.UI.reserved_height_class_flashcards)  -- header + tabs + progress + pagination
-    local available_h = screen_h - reserved_h
+    local header_h = measureItemsHeight(items)
+    local pagination_h = Screen:scaleBySize(PAGINATION_BAR_H)
+    local available_h = screen_h - header_h - pagination_h
     local items_per_page = math.max(3, math.floor(available_h / (row_h + 1)))
 
     local total_pages = math.ceil(#active_cards / items_per_page)
@@ -2024,10 +2063,11 @@ function ClassDetailScreen:buildHighlightsTab(items, screen_w, screen_h, content
         return
     end
 
-    -- Paginate
+    -- Paginate — measure actual header/chrome height
     local row_h = Screen:scaleBySize(Config.UI.row_height_class_highlights)
-    local reserved_h = Screen:scaleBySize(Config.UI.reserved_height_class_highlights)  -- header + tabs + progress + pagination
-    local available_h = screen_h - reserved_h
+    local header_h = measureItemsHeight(items)
+    local pagination_h = Screen:scaleBySize(PAGINATION_BAR_H)
+    local available_h = screen_h - header_h - pagination_h
     local items_per_page = math.max(3, math.floor(available_h / (row_h + 1)))
 
     local total_pages = math.ceil(#all_hl / items_per_page)
@@ -2193,11 +2233,19 @@ function ClassDetailScreen:getClassNotebooksDir(class_name)
     if not lfs.attributes(base) then
         lfs.mkdir(base)
     end
-    -- Sanitize for FAT32: only strip / \ : * ? " < > |
-    -- Preserves Unicode letters, accents, CJK, apostrophes, etc.
+    -- Sanitize for FAT32 + block path traversal.
+    -- Strips: path separators, : * ? " < > |, ".." sequences, and
+    -- leading/trailing dots/spaces. Preserves Unicode letters, accents,
+    -- CJK, apostrophes, etc. A class name of "..", "../foo", or any
+    -- other traversal attempt collapses to "" and falls back to "class".
     local safe_name = class_name:gsub('[/\\:%*%?"<>|]', "")
-    safe_name = safe_name:gsub("^%s+", ""):gsub("%s+$", "")  -- trim
-    safe_name = safe_name:sub(1, 100)  -- limit path component length
+    while safe_name:find("%.%.") do
+        safe_name = safe_name:gsub("%.%.", ".")
+    end
+    safe_name = safe_name:gsub("^[%s%.]+", ""):gsub("[%s%.]+$", "")
+    safe_name = safe_name:sub(1, 100)
+    -- Re-trim in case the length clamp left a trailing dot
+    safe_name = safe_name:gsub("[%s%.]+$", "")
     if safe_name == "" then safe_name = "class" end
     local dir = base .. "/" .. safe_name
     if not lfs.attributes(dir) then
@@ -2278,11 +2326,11 @@ function ClassDetailScreen:buildNotebooksTab(items, screen_w, screen_h, content_
     })
     table.insert(items, VerticalSpan:new{ width = 4 })
 
-    -- Paginate
+    -- Paginate — measure actual header/chrome height
     local row_h = Screen:scaleBySize(Config.UI.row_height_notebook_list)
-    -- +80 compensates for tab bar + progress summary height not in base config value
-    local reserved_h = Screen:scaleBySize(Config.UI.reserved_height_notebook_list + 80)
-    local available_h = screen_h - reserved_h
+    local header_h = measureItemsHeight(items)
+    local pagination_h = Screen:scaleBySize(PAGINATION_BAR_H)
+    local available_h = screen_h - header_h - pagination_h
     local items_per_page = math.max(3, math.floor(available_h / (row_h + 1)))
 
     local total_pages = math.ceil(#notebooks / items_per_page)
@@ -2446,8 +2494,18 @@ function ClassDetailScreen:showCreateNotebookDialog()
                     callback = function()
                         local raw_name = dialog:getInputText()
                         UIManager:close(dialog)
-                        local name = CozyUI.sanitizeInput(raw_name, Config.UI.max_notebook_name)
-                        if name == "" then return end
+                        -- Filename-safe sanitize: name is interpolated into a
+                        -- filesystem path in createNotebook(). sanitizeFilename
+                        -- blocks "/", "\", "..", and FAT32-reserved chars so a
+                        -- crafted name cannot escape the notebooks directory.
+                        local name = CozyUI.sanitizeFilename(raw_name, Config.UI.max_notebook_name)
+                        if name == "" then
+                            UIManager:show(InfoMessage:new{
+                                text = _("Please enter a valid notebook name."),
+                                timeout = 3,
+                            })
+                            return
+                        end
                         -- Step 2: Template picker
                         detail_screen:showTemplatePicker(cls, name)
                     end,
@@ -2585,7 +2643,10 @@ function ClassDetailScreen:renameNotebook(nb, nb_dir)
                     callback = function()
                         local raw = dialog:getInputText()
                         UIManager:close(dialog)
-                        local new_name = CozyUI.sanitizeInput(raw, Config.UI.max_notebook_name)
+                        -- Filename-safe sanitize: new_name is interpolated
+                        -- into a path below. sanitizeFilename blocks path
+                        -- traversal and reserved chars.
+                        local new_name = CozyUI.sanitizeFilename(raw, Config.UI.max_notebook_name)
                         if new_name == "" or new_name == nb.name then return end
                         local new_path = nb_dir .. "/" .. new_name .. ".pdf"
                         if lfs.attributes(new_path) then
@@ -2853,11 +2914,12 @@ function BookPickerScreen:buildUI()
     })
     table.insert(items, VerticalSpan:new{ width = 4 })
 
-    -- Book list (paginated)
+    -- Book list (paginated) — measure actual header height
     local books = self.books or {}
     local row_h = Screen:scaleBySize(Config.UI.row_height_book_picker)
-    local reserved_h = Screen:scaleBySize(Config.UI.reserved_height_book_picker)  -- header + hint + pagination
-    local available_h = screen_h - reserved_h
+    local header_h = measureItemsHeight(items)
+    local pagination_h = Screen:scaleBySize(PAGINATION_BAR_H)
+    local available_h = screen_h - header_h - pagination_h
     local items_per_page = math.max(3, math.floor(available_h / (row_h + 1)))
 
     local total_pages = math.max(1, math.ceil(#books / items_per_page))
@@ -3054,25 +3116,24 @@ end
 
 function ClassDetailScreen:showBookPickerScreen(all_books)
     local detail_screen = self
+    -- Show picker BEFORE closing detail to prevent flash
+    local picker = BookPickerScreen:new{
+        ui = detail_screen.ui,
+        class_id = detail_screen.class_id,
+        books = all_books,
+        on_done_callback = function()
+            -- Return to class detail
+            local new_detail = ClassDetailScreen:new{
+                ui = detail_screen.ui,
+                class_id = detail_screen.class_id,
+                current_tab = "books",
+                on_close_callback = detail_screen.on_close_callback,
+            }
+            UIManager:show(new_detail)
+        end,
+    }
+    UIManager:show(picker)
     UIManager:close(self)
-    UIManager:nextTick(function()
-        local picker = BookPickerScreen:new{
-            ui = detail_screen.ui,
-            class_id = detail_screen.class_id,
-            books = all_books,
-            on_done_callback = function()
-                -- Return to class detail
-                local new_detail = ClassDetailScreen:new{
-                    ui = detail_screen.ui,
-                    class_id = detail_screen.class_id,
-                    current_tab = "books",
-                    on_close_callback = detail_screen.on_close_callback,
-                }
-                UIManager:show(new_detail)
-            end,
-        }
-        UIManager:show(picker)
-    end)
 end
 
 

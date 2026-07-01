@@ -41,7 +41,8 @@ local StatusBar = WidgetContainer:extend{
 
 function StatusBar:init()
     self.width = self.width or Screen:getWidth()
-    self.height = self.height or Config.UI.statusbar_height
+    -- Scale the base height so it adapts to high-DPI screens (e.g. Libra Colour)
+    self.height = self.height or Screen:scaleBySize(Config.UI.statusbar_height)
     self.dimen = Geom:new{ w = self.width, h = self.height }
     self:buildContent()
 end
@@ -102,6 +103,15 @@ function StatusBar:buildContent()
         HorizontalSpan:new{ width = spacer_w + bar_gap },
         right_group,
     }
+
+    -- Ensure height accommodates actual text height (guards against
+    -- font scaling producing glyphs taller than the configured bar height)
+    local text_h = math.max(time_text:getSize().h, right_group:getSize().h)
+    local min_h = text_h + Screen:scaleBySize(8)  -- 4px padding top + bottom
+    if min_h > self.height then
+        self.height = min_h
+        self.dimen.h = min_h
+    end
 
     self[1] = FrameContainer:new{
         dimen = Geom:new{ w = self.width, h = self.height },

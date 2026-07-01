@@ -123,8 +123,15 @@ function SettingsScreen:onCloseWidget()
 end
 
 function SettingsScreen:onClose()
-    UIManager:close(self)
-    if self.on_close_callback then UIManager:nextTick(self.on_close_callback) end
+    if self.on_close_callback then
+        -- Show parent screen first to prevent flash of file manager
+        self.on_close_callback()
+        UIManager:nextTick(function()
+            UIManager:close(self)
+        end)
+    else
+        UIManager:close(self)
+    end
     return true
 end
 
@@ -937,6 +944,15 @@ function SettingsScreen:openAdvancedSettings()
                 })
             end,
         },
+        { separator = true, label = "Covers" },
+        {
+            label = _("Sync Calibre covers"),
+            description = _("Set Calibre cover images as KOReader custom covers"),
+            value_func = function() return "" end,
+            callback = function()
+                settings_screen:runCalibreCoverSync()
+            end,
+        },
         { separator = true, label = "About" },
         {
             label = _("About Cozy Home"),
@@ -954,6 +970,241 @@ function SettingsScreen:openAdvancedSettings()
         },
     }
     self:showSubScreen(_("Advanced"), rows)
+end
+
+-- ─── Calibre Cover Sync ───
+-- Scans books and sets proper cover images as KOReader custom covers.
+-- Works entirely on-device — no computer needed.
+--
+-- Strategy per book (skips any that already have a custom cover):
+--   1. Look for cover.jpg/png in the book's directory
+--   2. For EPUBs: extract the embedded cover via crengine
+--   3. For PDFs: render page 1 as a cover image and set it
+--      (forces KOReader to use a clean render instead of a
+--      stale or incorrectly cached cover)
+
+function SettingsScreen:runCalibreCoverSync()
+    local DocSettings = require("docsettings")
+    local DocumentRegistry = require("document/documentregistry")
+    local Blitbuffer = require("ffi/blitbuffer")
+    local DataStorage = require("datastorage")
+    local lfs = require("libs/libkoreader-lfs")
+    local BookScanner = require("lib/bookscanner")
+    local Png = require("ffi/png")
+    local logger = require("logger")
+    local ffi = require("ffi")
+    local C = ffi.C
+
+    local tmp_dir = DataStorage:getDataDir() .. "/cache"
+    local tmp_cover = tmp_dir .. "/cozy_cover_tmp.png"
+
+    --- Save a blitbuffer as a PNG file.
+    -- Works with any BB type by converting to 8-bit grayscale.
+    local function saveBBtoPNG(bb, path)
+        local w = bb:getWidth()
+        local h = bb:getHeight()
+        -- Convert to 8‑bit grayscale for consistent PNG output
+        local gray_bb = Blitbuffer.new(w, h, Blitbuffer.TYPE_BB8)
+        gray_bb:blitFrom(bb, 0, 0, 0, 0, w, h)
+        local ok, err = Png.encodeToFile(path, gray_bb.data, w, h, 1)
+        gray_bb:free()
+        return ok, err
+    end
+
+    -- Show progress
+    local loading = InfoMessage:new{
+        text = _("Scanning books and extracting covers...\nThis may take a few minutes."),
+        timeout = 300,
+    }
+    UIManager:show(loading)
+    UIManager:forceRePaint()
+
+    UIManager:nextTick(function()
+        UIManager:close(loading)
+
+        local scan_root = G_reader_settings:readSetting("home_dir")
+            or Device.home_dir or "/mnt/onboard"
+        local hidden_folders = Database:getHiddenFolders()
+        local all_books = BookScanner.scan(scan_root, hidden_folders)
+
+        local synced = 0
+        local skipped_has_custom = 0
+        local skipped_no_cover = 0
+        local errors = 0
+
+        for _, book in ipairs(all_books) do
+            local filepath = book.path
+
+            -- Skip if already has a custom cover
+            local existing_custom = DocSettings:findCustomCoverFile(filepath)
+            if existing_custom then
+                skipped_has_custom = skipped_has_custom + 1
+                goto continue
+            end
+
+            -- ── Strategy 1: Look for cover.jpg in book's directory ──
+            local dir = filepath:match("^(.*/)") or ""
+            local cover_file_found = nil
+            for _, cname in ipairs({ "cover.jpg", "cover.jpeg", "cover.png" }) do
+                local cover_path = dir .. cname
+                local attr = lfs.attributes(cover_path)
+                if attr and attr.mode == "file" and attr.size > 100 then
+                    cover_file_found = cover_path
+                    break
+                end
+            end
+
+            if cover_file_found then
+                local ok = pcall(function()
+                    DocSettings:flushCustomCover(filepath, cover_file_found)
+                end)
+                if ok then
+                    synced = synced + 1
+                    logger.info("CozyHome covers: set from file", cover_file_found)
+                else
+                    errors = errors + 1
+                end
+                goto continue
+            end
+
+            -- ── Strategy 2: Extract embedded cover from EPUB ──
+            local is_epub = filepath:lower():match("%.epub$") ~= nil
+            if is_epub then
+                local ok_extract = pcall(function()
+                    local doc = DocumentRegistry:openDocument(filepath)
+                    if not doc then return end
+                    if doc.loadDocument then
+                        if not doc:loadDocument(false) then
+                            doc:close()
+                            return
+                        end
+                    end
+                    -- crengine exposes getCoverPageImageData for EPUBs
+                    if doc._document and doc._document.getCoverPageImageData then
+                        local data, size = doc._document:getCoverPageImageData()
+                        if data and size then
+                            local RenderImage = require("ui/renderimage")
+                            local cover_bb = RenderImage:renderImageData(data, size)
+                            C.free(data)
+                            if cover_bb then
+                                local png_ok = saveBBtoPNG(cover_bb, tmp_cover)
+                                cover_bb:free()
+                                if png_ok then
+                                    local flush_ok = pcall(DocSettings.flushCustomCover,
+                                        DocSettings, filepath, tmp_cover)
+                                    os.remove(tmp_cover)
+                                    if flush_ok then
+                                        synced = synced + 1
+                                    else
+                                        errors = errors + 1
+                                    end
+                                else
+                                    skipped_no_cover = skipped_no_cover + 1
+                                end
+                            else
+                                skipped_no_cover = skipped_no_cover + 1
+                            end
+                        else
+                            skipped_no_cover = skipped_no_cover + 1
+                        end
+                    else
+                        skipped_no_cover = skipped_no_cover + 1
+                    end
+                    doc:close()
+                end)
+                if not ok_extract then
+                    errors = errors + 1
+                end
+                goto continue
+            end
+
+            -- ── Strategy 3: For PDFs, render page 1 as cover image ──
+            local is_pdf = filepath:lower():match("%.pdf$") ~= nil
+            if is_pdf then
+                local ok_pdf = pcall(function()
+                    local doc = DocumentRegistry:openDocument(filepath)
+                    if not doc then return end
+
+                    -- Get page 1 dimensions and render at a reasonable
+                    -- cover size (max ~600px wide to keep file small)
+                    local native = doc:getPageDimensions(1, 1, 0)
+                    if not native then
+                        doc:close()
+                        return
+                    end
+                    local max_w = 600
+                    local zoom = math.min(max_w / native.w, max_w / native.h)
+                    -- renderPage returns a tile with a .bb blitbuffer
+                    local tile = doc:renderPage(1, nil, zoom, 0, 1.0)
+                    if tile and tile.bb then
+                        local png_ok = saveBBtoPNG(tile.bb, tmp_cover)
+                        if png_ok then
+                            local flush_ok = pcall(DocSettings.flushCustomCover,
+                                DocSettings, filepath, tmp_cover)
+                            os.remove(tmp_cover)
+                            if flush_ok then
+                                synced = synced + 1
+                            else
+                                errors = errors + 1
+                            end
+                        else
+                            skipped_no_cover = skipped_no_cover + 1
+                        end
+                    else
+                        skipped_no_cover = skipped_no_cover + 1
+                    end
+                    doc:close()
+                end)
+                if not ok_pdf then
+                    errors = errors + 1
+                end
+                goto continue
+            end
+
+            -- Other formats: skip
+            skipped_no_cover = skipped_no_cover + 1
+
+            ::continue::
+        end
+
+        -- Clean up temp file just in case
+        os.remove(tmp_cover)
+
+        -- Invalidate BookInfoManager cache so covers refresh
+        if synced > 0 then
+            pcall(function()
+                local BookInfoManager = require("bookinfomanager")
+                if BookInfoManager then
+                    if BookInfoManager.cleanUp then
+                        BookInfoManager:cleanUp()
+                    end
+                end
+            end)
+        end
+
+        -- Show results
+        local parts = {}
+        table.insert(parts, _("Cover sync complete"))
+        table.insert(parts, "")
+        if synced > 0 then
+            table.insert(parts, string.format(_("✓ %d covers set"), synced))
+        end
+        if skipped_has_custom > 0 then
+            table.insert(parts, string.format(_("· %d already had custom covers"), skipped_has_custom))
+        end
+        if skipped_no_cover > 0 then
+            table.insert(parts, string.format(_("· %d could not be processed"), skipped_no_cover))
+        end
+        if errors > 0 then
+            table.insert(parts, string.format(_("⚠ %d errors"), errors))
+        end
+        if synced == 0 and errors == 0 then
+            table.insert(parts, _("No new covers to sync."))
+            table.insert(parts, "")
+            table.insert(parts, _("All books already have custom covers, or no books were found."))
+        end
+        UIManager:show(InfoMessage:new{ text = table.concat(parts, "\n") })
+    end)
 end
 
 -- ─── Public API ───

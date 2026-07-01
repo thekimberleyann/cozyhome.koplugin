@@ -1952,9 +1952,14 @@ function FlashcardsHub:onCloseWidget()
 end
 
 function FlashcardsHub:onClose()
-    UIManager:close(self)
     if self.on_close_callback then
-        UIManager:nextTick(self.on_close_callback)
+        -- Show parent screen first to prevent flash of file manager
+        self.on_close_callback()
+        UIManager:nextTick(function()
+            UIManager:close(self)
+        end)
+    else
+        UIManager:close(self)
     end
     return true
 end

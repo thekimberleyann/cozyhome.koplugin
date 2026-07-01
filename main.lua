@@ -103,6 +103,9 @@ function CozyHome:init()
     -- Register highlight menu item if we are in the reader context
     self:registerHighlightMenuItem()
 
+    -- Register "Add to Learning Space" in file manager hold dialog
+    self:registerFileManagerHold()
+
     -- Protect against freeze when long-pressing scanned PDFs
     self:patchScannedPdfProtection()
 
@@ -283,6 +286,218 @@ function CozyHome:registerHighlightMenuItem()
             end,
         }
     end)
+end
+
+-- ============================================
+-- FILE MANAGER HOLD DIALOG INTEGRATION
+-- ============================================
+-- When the user long-presses a book file in KOReader's file
+-- manager, we inject an "Add to Learning Space" button into
+-- the hold dialog. This lets users organize books without
+-- having to navigate into Cozy Home first.
+--
+-- Uses KOReader's official plugin API:
+--   FileManager:addFileDialogButtons(row_id, row_func)
+-- The row_func receives (file, is_file, book_props) and
+-- returns a button row table, or nil to skip.
+
+function CozyHome:registerFileManagerHold()
+    -- Only applies in file manager context (not reader)
+    if self.ui.document then return end
+
+    local fm = self.ui
+    -- addFileDialogButtons is the official KOReader API for this
+    if not fm or not fm.addFileDialogButtons then
+        logger.dbg("CozyHome: FileManager:addFileDialogButtons not available, skipping")
+        return
+    end
+
+    local cozyhome = self
+
+    fm:addFileDialogButtons("cozyhome_add_to_ls", function(file, is_file, book_props)
+        -- Only show for files, not directories
+        if not is_file then return nil end
+        return {
+            {
+                text = _("Add to Learning Space"),
+                callback = function()
+                    -- Close the file dialog first
+                    local fc = fm.file_chooser
+                    if fc and fc.file_dialog then
+                        UIManager:close(fc.file_dialog)
+                    end
+                    cozyhome:showAddToLearningSpaceDialog(file)
+                end,
+            },
+        }
+    end)
+
+    logger.dbg("CozyHome: File manager hold button registered")
+end
+
+--- Show a dialog to pick which learning space to add the book to.
+-- Lists existing classes and offers a "Create New" option.
+-- @param file string: full path to the book file
+function CozyHome:showAddToLearningSpaceDialog(file)
+    local Database = lazyRequire("lib/database")
+    if not Database then
+        UIManager:show(InfoMessage:new{
+            text = _("Database not available."),
+            timeout = 3,
+        })
+        return
+    end
+
+    Database:open()
+    local classes = Database:getClasses()
+
+    -- Extract book metadata
+    local book_title = file:match("([^/]+)$") or "Unknown"
+    book_title = book_title:gsub("%.%w+$", "")  -- strip extension
+    local book_author = ""
+
+    -- Try to get proper metadata from DocSettings
+    local DocSettings = require("docsettings")
+    local ok_ds, ds = pcall(DocSettings.open, DocSettings, file)
+    if ok_ds and ds then
+        local doc_props = ds:readSetting("doc_props")
+        if doc_props then
+            if doc_props.title and doc_props.title ~= "" then
+                book_title = doc_props.title
+            end
+            if doc_props.authors and doc_props.authors ~= "" then
+                book_author = doc_props.authors
+            end
+        end
+    end
+
+    local ButtonDialog = require("ui/widget/buttondialog")
+    local button_rows = {}
+
+    -- One button per existing class
+    -- NOTE: Do NOT use _ as loop variable here — it would shadow
+    -- the gettext _() function, causing crashes in the callbacks below.
+    for _i, cls in ipairs(classes) do
+        local class_id = cls.id
+        local class_name = cls.name
+        local icon = cls.icon or cls.name:sub(1, 1):upper()
+
+        -- Check if book is already in this class
+        local already_in = Database:isBookInClass(class_id, file)
+        local label = already_in
+            and (icon .. " " .. class_name .. " ✓")
+            or (icon .. " " .. class_name)
+
+        table.insert(button_rows, {{
+            text = label,
+            callback = function()
+                UIManager:close(self._ls_picker_dialog)
+                self._ls_picker_dialog = nil
+                if already_in then
+                    -- Already added — offer to remove instead
+                    Database:removeBookFromClass(class_id, file)
+                    UIManager:show(InfoMessage:new{
+                        text = string.format(_("Removed from '%s'"), class_name),
+                        timeout = 2,
+                    })
+                else
+                    Database:addBookToClass(class_id, file, book_title, book_author)
+                    UIManager:show(InfoMessage:new{
+                        text = string.format(_("Added to '%s'"), class_name),
+                        timeout = 2,
+                    })
+                end
+            end,
+        }})
+    end
+
+    -- "+ Create New" button
+    table.insert(button_rows, {{
+        text = _("+ Create New Learning Space"),
+        callback = function()
+            UIManager:close(self._ls_picker_dialog)
+            self._ls_picker_dialog = nil
+            self:showCreateAndAddDialog(file, book_title, book_author)
+        end,
+    }})
+
+    -- Cancel
+    table.insert(button_rows, {{
+        text = _("Cancel"),
+        callback = function()
+            UIManager:close(self._ls_picker_dialog)
+            self._ls_picker_dialog = nil
+        end,
+    }})
+
+    -- Title shows truncated book name
+    local display_title = book_title
+    if #display_title > 35 then
+        display_title = display_title:sub(1, 32) .. "..."
+    end
+
+    self._ls_picker_dialog = ButtonDialog:new{
+        title = _("Add to Learning Space") .. "\n" .. display_title,
+        buttons = button_rows,
+    }
+    UIManager:show(self._ls_picker_dialog)
+end
+
+--- Create a new learning space and immediately add the book to it.
+function CozyHome:showCreateAndAddDialog(file, book_title, book_author)
+    local Database = lazyRequire("lib/database")
+    local CozyUI = lazyRequire("lib/cozyui")
+    if not Database then return end
+
+    local InputDialog = require("ui/widget/inputdialog")
+    local cozyhome = self
+    local dialog
+    dialog = InputDialog:new{
+        title = _("✦ New Learning Space ✦"),
+        input = "",
+        input_hint = _("Class or topic name"),
+        buttons = {
+            {
+                {
+                    text = _("Cancel"),
+                    id = "close",
+                    callback = function()
+                        UIManager:close(dialog)
+                    end,
+                },
+                {
+                    text = _("Create & Add"),
+                    is_enter_default = true,
+                    callback = function()
+                        local raw_name = dialog:getInputText()
+                        UIManager:close(dialog)
+                        local name = raw_name
+                        if CozyUI and CozyUI.sanitizeInput then
+                            name = CozyUI.sanitizeInput(raw_name, 100)
+                        end
+                        if name ~= "" then
+                            local icon = name:sub(1, 1):upper()
+                            local class_id = Database:createClass(name, icon, nil)
+                            if class_id then
+                                Database:addBookToClass(class_id, file, book_title, book_author)
+                                UIManager:show(InfoMessage:new{
+                                    text = string.format(_("Created '%s' and added book"), name),
+                                    timeout = 2,
+                                })
+                            else
+                                UIManager:show(InfoMessage:new{
+                                    text = _("Failed to create learning space."),
+                                    timeout = 3,
+                                })
+                            end
+                        end
+                    end,
+                },
+            },
+        },
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
 end
 
 -- ============================================
@@ -525,6 +740,22 @@ end
 -- ============================================
 -- CLEANUP
 -- ============================================
+
+function CozyHome:onSuspend()
+    -- Delegate to FocusMode only if it's already loaded — avoids
+    -- force-requiring the module just to handle a no-op suspend.
+    local FocusMode = _module_cache["focusmode"]
+    if FocusMode and FocusMode.onSuspend then
+        FocusMode.onSuspend()
+    end
+end
+
+function CozyHome:onResume()
+    local FocusMode = _module_cache["focusmode"]
+    if FocusMode and FocusMode.onResume then
+        FocusMode.onResume()
+    end
+end
 
 function CozyHome:onCloseDocument()
     -- Phase 3: Invalidate highlight cache for the closed book
